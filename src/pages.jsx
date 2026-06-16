@@ -4,12 +4,12 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import {
   Link,
   NavLink,
+  Navigate,
   Outlet,
   useLocation,
   useNavigate,
@@ -28,19 +28,58 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import {
-  aiRecommendations,
-  contentIdeas,
-  contentMix,
-  overviewCards,
-  planSlots,
-  postingTimeTips,
-  posts,
-  reachSeries,
-  singlePostDetail,
-  suggestedHashtags,
-  userProfile,
-} from "./mockData.js";
+import { useAppData, usePlan } from "./context/AppDataProvider.jsx";
+import { PLAN_CONTENT_TYPES } from "./api/mappers.js";
+
+/* Статичное превью на лендинге (не из БД) */
+const LANDING_PREVIEW_CARDS = [
+  { label: "Охват (7 дн.)", value: "48.2K", delta: "+12%" },
+  { label: "Вовлечённость", value: "5.4%", delta: "+0.6%" },
+];
+const LANDING_PREVIEW_CHART = [
+  { day: "Пн", reach: 4200 },
+  { day: "Вт", reach: 5100 },
+  { day: "Ср", reach: 3800 },
+  { day: "Чт", reach: 6200 },
+  { day: "Пт", reach: 7100 },
+  { day: "Сб", reach: 8900 },
+  { day: "Вс", reach: 5400 },
+];
+
+function DataLoading({ className = "", text = "Загрузка..." }) {
+  return (
+    <p className={`text-sm text-slate-500 dark:text-slate-400 ${className}`}>
+      {text}
+    </p>
+  );
+}
+
+function DataError({ message, onRetry }) {
+  return (
+    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-6 text-center dark:border-rose-900/50 dark:bg-rose-950/30">
+      <p className="text-sm font-medium text-rose-700 dark:text-rose-300">
+        {message || "Не удалось загрузить данные"}
+      </p>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
+        >
+          Повторить
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DataEmpty({ message }) {
+  return (
+    <p className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+      {message}
+    </p>
+  );
+}
 
 /* ---------- Тема (без циклического импорта с App) ---------- */
 
@@ -78,126 +117,6 @@ export function ThemeProvider({ children }) {
 
   return (
     <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
-  );
-}
-
-/* ---------- Контент-план: живое mock-состояние (V2, без backend) ---------- */
-
-const PlanContext = createContext(null);
-
-export function usePlan() {
-  return useContext(PlanContext);
-}
-
-/**
- * Хранит копию слотов плана + сгенерированные follow-up по postId.
- * Кнопки на странице поста обновляют slots / followUpsByPost.
- */
-export function PlanProvider({ children }) {
-  const [slots, setSlots] = useState(() =>
-    planSlots.map((s) => ({
-      ...s,
-      description: s.description ?? "",
-      content: s.content ?? "",
-      thumbnail: s.thumbnail ?? "",
-      format: s.format ?? "",
-      tags: s.tags ?? "",
-    }))
-  );
-  const [followUpsByPost, setFollowUpsByPost] = useState({});
-
-  const duplicateIdeaToPlan = useCallback((post) => {
-    const id = `slot-${Date.now()}`;
-    setSlots((prev) => [
-      ...prev,
-      {
-        id,
-        day: "Сб",
-        title: `Идея: ${post.title}`,
-        status: "idea",
-        week: 1,
-        description: "",
-        content: post.detail ?? post.title ?? "",
-        thumbnail: post.thumbnail ?? "",
-        format: post.tag || post.type || "Идея",
-        tags: "",
-      },
-    ]);
-  }, []);
-
-  const generateFollowUp = useCallback((post) => {
-    const line = `Часть 2: «${post.title}» — ответы на топ-комментарии + опрос`;
-    setFollowUpsByPost((prev) => ({
-      ...prev,
-      [post.id]: [...(prev[post.id] || []), line],
-    }));
-  }, []);
-
-  /** Ручная карточка в план: день (неделя) или номер недели (месяц) + mock-поля. */
-  const addManualSlot = useCallback(
-    ({ title, description, day, week }) => {
-      const id = `slot-${Date.now()}`;
-      setSlots((prev) => [
-        ...prev,
-        {
-          id,
-          day,
-          title: title.trim(),
-          description: (description || "").trim(),
-          content:
-            (description || "").trim() ||
-            "Текст поста будет добавлен позже.",
-          status: "draft",
-          week: week ?? 1,
-          thumbnail: "",
-          format: "Пост",
-          tags: "",
-        },
-      ]);
-    },
-    []
-  );
-
-  const copySlotToCell = useCallback(({ sourceId, day, week }) => {
-    setSlots((prev) => {
-      const src = prev.find((s) => s.id === sourceId);
-      if (!src) return prev;
-      const id = `slot-${Date.now()}`;
-      const titleBase = String(src.title).replace(/\s+\(копия\)$/, "").trim();
-      return [
-        ...prev,
-        {
-          ...src,
-          id,
-          day,
-          week: week ?? 1,
-          title: `${titleBase} (копия)`,
-        },
-      ];
-    });
-  }, []);
-
-  const value = useMemo(
-    () => ({
-      slots,
-      duplicateIdeaToPlan,
-      generateFollowUp,
-      followUpsByPost,
-      addManualSlot,
-      copySlotToCell,
-    }),
-    [
-      slots,
-      followUpsByPost,
-      duplicateIdeaToPlan,
-      generateFollowUp,
-      addManualSlot,
-      copySlotToCell,
-    ]
-  );
-
-  return (
-    <PlanContext.Provider value={value}>{children}</PlanContext.Provider>
   );
 }
 
@@ -255,17 +174,11 @@ function validateAuthPassword(value) {
   return "";
 }
 
-/** Скелетон таблицы публикаций (mock loading) */
+/** Скелетон таблицы публикаций */
 function PublicationsLoading() {
   return (
     <div className="px-5 py-10">
-      <div className="flex items-center justify-center gap-3 text-sm text-slate-500">
-        <span
-          className="h-5 w-5 animate-spin rounded-full border-2 border-sky-600 border-t-transparent dark:border-sky-400"
-          aria-hidden
-        />
-        Загрузка публикаций…
-      </div>
+      <DataLoading className="text-center" />
       <div className="mt-6 space-y-3">
         {[1, 2, 3, 4].map((i) => (
           <div
@@ -280,33 +193,22 @@ function PublicationsLoading() {
 
 function PublicationsError({ message, onRetry }) {
   return (
-    <div className="px-5 py-12 text-center">
-      <p className="text-sm font-medium text-rose-600 dark:text-rose-400">
-        {message}
-      </p>
-      <p className="mt-2 text-xs text-slate-500">
-        Демо: первый запрос имитирует сбой, повтор — успех.
-      </p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="mt-5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-      >
-        Повторить
-      </button>
+    <div className="px-5 py-8">
+      <DataError message={message} onRetry={onRetry} />
     </div>
   );
 }
 
-function PublicationsEmpty() {
+function PublicationsEmpty({ filtered }) {
   return (
-    <div className="px-5 py-14 text-center">
-      <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
-        Нет публикаций этого типа
-      </p>
-      <p className="mt-1 text-xs text-slate-500">
-        Смените фильтр или добавьте контент в план.
-      </p>
+    <div className="px-5 py-8">
+      <DataEmpty
+        message={
+          filtered
+            ? "Нет публикаций этого типа"
+            : "Пока нет постов"
+        }
+      />
     </div>
   );
 }
@@ -385,10 +287,10 @@ export function LandingPage() {
               <span className="text-xs font-medium text-slate-500">
                 Превью дашборда
               </span>
-              <Pill tone="emerald">Live mock</Pill>
+              <Pill tone="emerald">Превью</Pill>
             </div>
             <div className="grid gap-3 p-4 sm:grid-cols-2">
-              {overviewCards.slice(0, 2).map((c) => (
+              {LANDING_PREVIEW_CARDS.map((c) => (
                 <div
                   key={c.label}
                   className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-800/50"
@@ -403,7 +305,7 @@ export function LandingPage() {
             </div>
             <div className="h-40 px-2 pb-4">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={reachSeries}>
+                <AreaChart data={LANDING_PREVIEW_CHART}>
                   <defs>
                     <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.35} />
@@ -482,11 +384,13 @@ export function LandingPage() {
 export function AuthPage() {
   const [mode, setMode] = useState("login");
   const nav = useNavigate();
+  const { signIn, signUp } = useAppData();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [authError, setAuthError] = useState("");
 
   const clearFieldError = (key) => {
     setErrors((e) => {
@@ -499,9 +403,10 @@ export function AuthPage() {
   const switchMode = (m) => {
     setMode(m);
     setErrors({});
+    setAuthError("");
   };
 
-  const onSubmit = (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault();
     const next = {
       email: validateAuthEmail(email),
@@ -514,10 +419,26 @@ export function AuthPage() {
     if (Object.values(next).some(Boolean)) return;
 
     setSubmitting(true);
-    window.setTimeout(() => {
-      setSubmitting(false);
+    setAuthError("");
+    try {
+      let newSession = null;
+      if (mode === "login") {
+        newSession = await signIn(email.trim(), password);
+      } else {
+        newSession = await signUp(email.trim(), password, name.trim());
+      }
+      if (!newSession) {
+        setAuthError(
+          "Аккаунт создан. Подтвердите email по ссылке из письма, затем войдите."
+        );
+        return;
+      }
       nav("/app");
-    }, 750);
+    } catch (err) {
+      setAuthError(err.message || "Ошибка входа. Проверьте email и пароль.");
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const inputError = (key) =>
@@ -626,6 +547,11 @@ export function AuthPage() {
                 </p>
               )}
             </div>
+            {authError && (
+              <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                {authError}
+              </p>
+            )}
             <button
               type="submit"
               disabled={submitting}
@@ -656,14 +582,14 @@ export function AuthPage() {
 
           <button
             type="button"
-            onClick={() => nav("/app")}
+            onClick={() => nav("/login")}
             className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
           >
             <span className="text-lg">📸</span>
             Continue with Instagram
           </button>
           <p className="mt-6 text-center text-xs text-slate-500">
-            Демо: OAuth не подключён — кнопка ведёт в макет дашборда.
+            OAuth пока не подключён — войдите через email или зарегистрируйтесь.
           </p>
         </div>
       </div>
@@ -704,6 +630,25 @@ function headerTitle(pathname) {
 export function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
+  const { userProfile, signOut, session, authReady } = useAppData();
+  const nav = useNavigate();
+
+  const handleSignOut = async () => {
+    await signOut();
+    nav("/login");
+  };
+
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <DataLoading />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <Navigate to="/login" replace />;
+  }
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -788,15 +733,13 @@ export function DashboardLayout() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="hidden rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 sm:inline dark:bg-emerald-950/40 dark:text-emerald-200">
-              Демо-данные
-            </span>
-            <Link
-              to="/login"
+            <button
+              type="button"
+              onClick={handleSignOut}
               className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
             >
               Выйти
-            </Link>
+            </button>
           </div>
         </header>
         <main className="flex-1 p-4 lg:p-8">
@@ -811,45 +754,33 @@ export function DashboardLayout() {
 
 export function DashboardHome() {
   const [typeFilter, setTypeFilter] = useState("all");
-  const [pubFetch, setPubFetch] = useState({
-    status: "loading",
-    items: null,
-    error: null,
-  });
-  const simFailOnceRef = useRef(true);
-
-  /** Имитация запроса: первый вызов — error, повтор — данные из mock. */
-  const loadPublications = useCallback(() => {
-    setPubFetch((s) => ({
-      ...s,
-      status: "loading",
-      error: null,
-    }));
-    const tid = window.setTimeout(() => {
-      if (simFailOnceRef.current) {
-        simFailOnceRef.current = false;
-        setPubFetch({
-          status: "error",
-          items: null,
-          error: "Не удалось получить публикации (mock-сбой).",
-        });
-      } else {
-        setPubFetch({ status: "ready", items: posts, error: null });
-      }
-    }, 650);
-    return () => window.clearTimeout(tid);
-  }, []);
-
-  useEffect(() => {
-    const cancel = loadPublications();
-    return cancel;
-  }, [loadPublications]);
+  const {
+    loading,
+    error,
+    refresh,
+    posts,
+    recommendations,
+    overviewCards,
+    reachSeries,
+    contentMix,
+  } = useAppData();
 
   const filteredRows = useMemo(() => {
-    if (pubFetch.status !== "ready" || !pubFetch.items) return [];
-    if (typeFilter === "all") return pubFetch.items;
-    return pubFetch.items.filter((p) => p.type === typeFilter);
-  }, [pubFetch.status, pubFetch.items, typeFilter]);
+    if (typeFilter === "all") return posts;
+    return posts.filter((p) => p.type === typeFilter);
+  }, [posts, typeFilter]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <DataLoading />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <DataError message={error} onRetry={refresh} />;
+  }
 
   return (
     <div className="space-y-6">
@@ -949,7 +880,10 @@ export function DashboardHome() {
             Лучшие посты
           </h2>
           <ul className="mt-4 space-y-3">
-            {posts.slice(0, 2).map((p) => (
+            {posts.length === 0 ? (
+              <DataEmpty message="Пока нет постов" />
+            ) : (
+              posts.slice(0, 2).map((p) => (
               <li key={p.id}>
                 <Link
                   to={`/app/posts/${p.id}`}
@@ -971,7 +905,8 @@ export function DashboardHome() {
                   <span className="text-slate-400">→</span>
                 </Link>
               </li>
-            ))}
+              ))
+            )}
           </ul>
         </div>
         <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-sky-50 to-indigo-50 p-5 dark:border-slate-800 dark:from-sky-950/30 dark:to-indigo-950/20">
@@ -987,7 +922,10 @@ export function DashboardHome() {
             </Link>
           </div>
           <ul className="mt-4 space-y-3">
-            {aiRecommendations.slice(0, 2).map((r) => (
+            {recommendations.length === 0 ? (
+              <DataEmpty message="Пока нет AI-рекомендаций" />
+            ) : (
+              recommendations.slice(0, 2).map((r) => (
               <li
                 key={r.id}
                 className="rounded-xl border border-white/60 bg-white/70 p-4 text-sm shadow-sm dark:border-slate-700/80 dark:bg-slate-900/60"
@@ -1005,7 +943,8 @@ export function DashboardHome() {
                   {r.detail}
                 </p>
               </li>
-            ))}
+              ))
+            )}
           </ul>
         </div>
       </div>
@@ -1034,17 +973,9 @@ export function DashboardHome() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          {pubFetch.status === "loading" && <PublicationsLoading />}
-          {pubFetch.status === "error" && (
-            <PublicationsError
-              message={pubFetch.error}
-              onRetry={loadPublications}
-            />
-          )}
-          {pubFetch.status === "ready" && filteredRows.length === 0 && (
-            <PublicationsEmpty />
-          )}
-          {pubFetch.status === "ready" && filteredRows.length > 0 && (
+          {filteredRows.length === 0 ? (
+            <PublicationsEmpty filtered={typeFilter !== "all"} />
+          ) : (
             <table className="min-w-full text-left text-sm">
               <thead className="bg-slate-50 text-xs uppercase text-slate-500 dark:bg-slate-800/80">
                 <tr>
@@ -1095,7 +1026,36 @@ export function DashboardHome() {
 /* ---------- 4. AI Recommendations ---------- */
 
 export function RecommendationsPage() {
+  const {
+    loading,
+    error,
+    refresh,
+    recommendations,
+    postingTimeTips,
+    contentIdeas,
+    suggestedHashtags,
+  } = useAppData();
   const { duplicateIdeaToPlan } = usePlan();
+
+  const handleAddToPlan = async (r) => {
+    try {
+      await duplicateIdeaToPlan(r);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <DataLoading />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <DataError message={error} onRetry={refresh} />;
+  }
 
   return (
     <div className="space-y-8">
@@ -1104,12 +1064,15 @@ export function RecommendationsPage() {
           AI-рекомендации
         </h2>
         <p className="text-sm text-slate-500">
-          Подсказки на основе mock-трендов вашего аккаунта.
+          Подсказки на основе аналитики вашего аккаунта.
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {aiRecommendations.map((r) => (
+      {recommendations.length === 0 ? (
+        <DataEmpty message="Пока нет AI-рекомендаций" />
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {recommendations.map((r) => (
           <article
             key={r.id}
             className="flex flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900"
@@ -1126,14 +1089,15 @@ export function RecommendationsPage() {
             </p>
             <button
               type="button"
-              onClick={() => duplicateIdeaToPlan(r)}
+              onClick={() => handleAddToPlan(r)}
               className="mt-4 text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400"
             >
               Добавить в план →
             </button>
           </article>
         ))}
-      </div>
+        </div>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
@@ -1199,49 +1163,369 @@ export function RecommendationsPage() {
 
 /* ---------- 6. Content plan (календарный / DnD-стиль) ---------- */
 
+function PlanCrudButtons({
+  onEdit,
+  onDelete,
+  deleting,
+  compact = false,
+}) {
+  return (
+    <div
+      className={`flex gap-1 ${compact ? "" : "mt-2"}`}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={onEdit}
+        className={`rounded-lg border border-slate-200 font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800 ${
+          compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs"
+        }`}
+      >
+        Edit
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        disabled={deleting}
+        className={`rounded-lg border border-rose-200 font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/50 dark:text-rose-300 dark:hover:bg-rose-950/30 ${
+          compact ? "px-2 py-0.5 text-[10px]" : "px-2.5 py-1 text-xs"
+        }`}
+      >
+        {deleting ? "..." : "Delete"}
+      </button>
+    </div>
+  );
+}
+
+function PlanItemModal({
+  slot,
+  mode,
+  editTitle,
+  editFormat,
+  editDescription,
+  editTitleTouched,
+  onTitleBlur,
+  saving,
+  saveError,
+  onClose,
+  onStartEdit,
+  onCancelEdit,
+  onEditTitle,
+  onEditFormat,
+  onEditDescription,
+  onSave,
+  onDelete,
+  deleting,
+}) {
+  const titleInvalid = !editTitle.trim();
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="plan-modal-title"
+    >
+      <button
+        type="button"
+        className="absolute inset-0 bg-slate-900/50 dark:bg-black/60"
+        aria-label="Закрыть"
+        onClick={onClose}
+      />
+      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex items-start justify-between gap-3">
+          <h3
+            id="plan-modal-title"
+            className="pr-2 text-lg font-bold text-slate-900 dark:text-white"
+          >
+            {mode === "edit" ? "Редактирование" : slot.title}
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            Закрыть
+          </button>
+        </div>
+
+        {mode === "edit" ? (
+          <form
+            className="mt-4 space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              onSave();
+            }}
+          >
+            <div>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                Тип контента <span className="text-rose-500">*</span>
+              </label>
+              <select
+                required
+                value={editFormat}
+                onChange={(e) => onEditFormat(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              >
+                {PLAN_CONTENT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                Тема / заголовок <span className="text-rose-500">*</span>
+              </label>
+              <input
+                required
+                value={editTitle}
+                onChange={(e) => onEditTitle(e.target.value)}
+                onBlur={onTitleBlur}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+              {editTitleTouched && titleInvalid && (
+                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                  Поле не может быть пустым
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                О чём контент
+              </label>
+              <textarea
+                value={editDescription}
+                onChange={(e) => onEditDescription(e.target.value)}
+                rows={3}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              />
+            </div>
+            {saveError && (
+              <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                {saveError}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="submit"
+                disabled={saving || titleInvalid}
+                className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {saving ? "Saving..." : "Сохранить"}
+              </button>
+              <button
+                type="button"
+                onClick={onCancelEdit}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
+              >
+                Отмена
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            {slot.thumbnail ? (
+              <img
+                src={slot.thumbnail}
+                alt=""
+                className="mt-4 w-full max-h-52 rounded-xl object-cover"
+              />
+            ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {slot.format ? <Pill tone="sky">{slot.format}</Pill> : null}
+              <Pill tone="neutral">
+                {slot.status === "ready"
+                  ? "Готово"
+                  : slot.status === "draft"
+                    ? "Черновик"
+                    : "Идея"}
+              </Pill>
+              <Pill tone="neutral">{slot.day}</Pill>
+            </div>
+            <div className="mt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Описание
+              </p>
+              <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">
+                {slot.description?.trim() || "—"}
+              </p>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={onStartEdit}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
+              >
+                Edit
+              </button>
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={deleting}
+                className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/50 dark:text-rose-300"
+              >
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ContentPlanPage() {
   const [horizon, setHorizon] = useState("week");
-  const { slots, addManualSlot, copySlotToCell } = usePlan();
+  const {
+    slots,
+    planLoading,
+    planError,
+    addManualSlot,
+    copySlotToCell,
+    updatePlanItem,
+    deletePlanItem,
+    refreshPlan,
+  } = usePlan();
   const [showAddForm, setShowAddForm] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDescription, setNewDescription] = useState("");
+  const [newContentType, setNewContentType] = useState("post");
+  const [titleTouched, setTitleTouched] = useState(false);
   const [targetDay, setTargetDay] = useState("Пн");
   const [targetWeek, setTargetWeek] = useState(1);
-  const [historyModalSlot, setHistoryModalSlot] = useState(null);
+  const [modalSlot, setModalSlot] = useState(null);
+  const [modalMode, setModalMode] = useState("view");
+  const [editTitle, setEditTitle] = useState("");
+  const [editFormat, setEditFormat] = useState("post");
+  const [editDescription, setEditDescription] = useState("");
+  const [editTitleTouched, setEditTitleTouched] = useState(false);
   const [dropTargetKey, setDropTargetKey] = useState(null);
+  const [saveError, setSaveError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [deleteLoadingId, setDeleteLoadingId] = useState(null);
+
+  const titleInvalid = !newTitle.trim();
+
+  const openModal = (slot, mode = "view") => {
+    setModalSlot(slot);
+    setModalMode(mode);
+    setEditTitle(slot.title);
+    setEditFormat(slot.formatKey || "post");
+    setEditDescription(slot.description || "");
+    setEditTitleTouched(false);
+    setSaveError("");
+    setActionError("");
+  };
+
+  const closeModal = () => {
+    setModalSlot(null);
+    setModalMode("view");
+    setSaveError("");
+  };
 
   useEffect(() => {
-    if (!historyModalSlot) return;
+    if (!modalSlot) return;
     const onKey = (e) => {
-      if (e.key === "Escape") setHistoryModalSlot(null);
+      if (e.key === "Escape") closeModal();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [historyModalSlot]);
+  }, [modalSlot]);
 
-  const submitManual = (e) => {
-    e.preventDefault();
-    const title = newTitle.trim();
-    if (!title) return;
-    if (horizon === "week") {
-      addManualSlot({
-        title,
-        description: newDescription,
-        day: targetDay,
-        week: 1,
-      });
-    } else {
-      addManualSlot({
-        title,
-        description: newDescription,
-        day: "Пн",
-        week: targetWeek,
-      });
+  const handleDelete = async (id) => {
+    setDeleteLoadingId(id);
+    setActionError("");
+    try {
+      await deletePlanItem(id);
+      if (modalSlot?.id === id) closeModal();
+    } catch {
+      setActionError("Не удалось удалить запись. Попробуйте позже.");
+    } finally {
+      setDeleteLoadingId(null);
     }
-    setNewTitle("");
-    setNewDescription("");
-    setShowAddForm(false);
   };
+
+  const handleSaveEdit = async () => {
+    if (!modalSlot) return;
+    setEditTitleTouched(true);
+    if (!editTitle.trim()) return;
+
+    setSaving(true);
+    setSaveError("");
+    try {
+      await updatePlanItem(modalSlot.id, {
+        title: editTitle,
+        format: editFormat,
+        description: editDescription,
+      });
+      const updated = {
+        ...modalSlot,
+        title: editTitle.trim(),
+        formatKey: editFormat,
+        format:
+          PLAN_CONTENT_TYPES.find((t) => t.value === editFormat)?.label ||
+          editFormat,
+        description: editDescription.trim(),
+      };
+      setModalSlot(updated);
+      setModalMode("view");
+    } catch (err) {
+      setSaveError(
+        err.message || "Не удалось сохранить изменения. Попробуйте позже."
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitManual = async (e) => {
+    e.preventDefault();
+    setTitleTouched(true);
+    const title = newTitle.trim();
+    if (!title || !newContentType) return;
+    setSaving(true);
+    setSaveError("");
+    try {
+      const payload = {
+        title,
+        description: newDescription,
+        format: newContentType,
+        horizon,
+      };
+      if (horizon === "week") {
+        await addManualSlot({ ...payload, day: targetDay, week: 1 });
+      } else {
+        await addManualSlot({ ...payload, day: "Пн", week: targetWeek });
+      }
+      setNewTitle("");
+      setNewDescription("");
+      setNewContentType("post");
+      setTitleTouched(false);
+      setShowAddForm(false);
+    } catch {
+      setSaveError("Не удалось сохранить запись. Попробуйте позже.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (planLoading && slots.length === 0) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <DataLoading text="Loading..." />
+      </div>
+    );
+  }
+
+  if (planError && slots.length === 0) {
+    return (
+      <DataError message={planError} onRetry={refreshPlan} />
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -1251,7 +1535,7 @@ export function ContentPlanPage() {
             Контент-план
           </h2>
           <p className="text-sm text-slate-500">
-            Карточки в сетке имитируют перетаскивание между днями.
+            Планируйте публикации по дням: Reels, Stories, посты и другой контент.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -1260,7 +1544,7 @@ export function ContentPlanPage() {
             onClick={() => setShowAddForm((v) => !v)}
             className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
           >
-            + Добавить пост
+            + Добавить контент
           </button>
           <div className="flex rounded-full bg-slate-200/70 p-1 dark:bg-slate-800">
             {[
@@ -1284,37 +1568,75 @@ export function ContentPlanPage() {
         </div>
       </div>
 
+      {actionError && (
+        <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+          {actionError}
+        </p>
+      )}
+
+      {planError && slots.length > 0 && (
+        <p className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          {planError}
+        </p>
+      )}
+
       {showAddForm && (
         <form
           onSubmit={submitManual}
           className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
         >
           <p className="text-sm font-semibold text-slate-900 dark:text-white">
-            Новый пост в плане
+            Новая единица контента
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Запланируйте публикацию: укажите тип, тему и день выхода.
           </p>
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                Тип контента <span className="text-rose-500">*</span>
+              </label>
+              <select
+                required
+                value={newContentType}
+                onChange={(e) => setNewContentType(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+              >
+                {PLAN_CONTENT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="sm:col-span-2">
               <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                Название
+                Тема / заголовок <span className="text-rose-500">*</span>
               </label>
               <input
                 required
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
+                onBlur={() => setTitleTouched(true)}
                 className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-                placeholder="Например: Reels про запуск"
+                placeholder="Например: Закулисье съёмки Reels"
               />
+              {titleTouched && titleInvalid && (
+                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                  Поле не может быть пустым
+                </p>
+              )}
             </div>
             <div className="sm:col-span-2">
               <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                Описание
+                О чём контент
               </label>
               <textarea
                 value={newDescription}
                 onChange={(e) => setNewDescription(e.target.value)}
                 rows={2}
                 className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
-                placeholder="Кратко, о чём пост"
+                placeholder="Кратко: идея, ключевой месседж, призыв к действию"
               />
             </div>
             {horizon === "week" ? (
@@ -1353,12 +1675,18 @@ export function ContentPlanPage() {
               </div>
             )}
           </div>
+          {saveError && (
+            <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+              {saveError}
+            </p>
+          )}
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="submit"
-              className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500"
+              disabled={saving || titleInvalid}
+              className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              Сохранить в план
+              {saving ? "Saving..." : "Сохранить в план"}
             </button>
             <button
               type="button"
@@ -1369,6 +1697,10 @@ export function ContentPlanPage() {
             </button>
           </div>
         </form>
+      )}
+
+      {slots.length === 0 && !planLoading && (
+        <DataEmpty message="Контент-план пуст" />
       )}
 
       {/* Сетка календаря: неделя — 7 колонок по дням; месяц — 4 недели */}
@@ -1409,6 +1741,7 @@ export function ContentPlanPage() {
                   sourceId,
                   day: dropDay,
                   week: dropWeek,
+                  horizon,
                 });
               }}
               className={`flex min-h-[160px] flex-col rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-2 transition dark:border-slate-700 dark:bg-slate-900/40 ${
@@ -1417,9 +1750,8 @@ export function ContentPlanPage() {
                   : ""
               }`}
             >
-              <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-500">
+              <div className="mb-2 text-xs font-semibold text-slate-500">
                 <span>{day}</span>
-                <span className="text-[10px] text-slate-400">колонка</span>
               </div>
               {slotsInCell.map((slot) => (
                 <div
@@ -1441,42 +1773,49 @@ export function ContentPlanPage() {
                     >
                       ⠿
                     </span>
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onClick={() => setHistoryModalSlot(slot)}
-                    >
-                      <div className="flex items-center gap-1 text-[10px] text-slate-400">
-                        <span className="rounded bg-slate-100 px-1 dark:bg-slate-800">
-                          ⋮⋮
-                        </span>
-                        просмотр
-                      </div>
-                      {slot.thumbnail ? (
-                        <img
-                          src={slot.thumbnail}
-                          alt=""
-                          className="mt-1 h-10 w-full rounded-lg object-cover"
-                        />
-                      ) : null}
-                      <p className="mt-1 text-xs font-semibold text-slate-900 dark:text-white">
-                        {slot.title}
-                      </p>
-                      {slot.description ? (
-                        <p className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">
-                          {slot.description}
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        className="w-full text-left"
+                        onClick={() => openModal(slot)}
+                      >
+                        <div className="flex items-center gap-1 text-[10px] text-slate-400">
+                          {slot.format ? (
+                            <Pill tone="sky">{slot.format}</Pill>
+                          ) : null}
+                        </div>
+                        {slot.thumbnail ? (
+                          <img
+                            src={slot.thumbnail}
+                            alt=""
+                            className="mt-1 h-10 w-full rounded-lg object-cover"
+                          />
+                        ) : null}
+                        <p className="mt-1 text-xs font-semibold text-slate-900 dark:text-white">
+                          {slot.title}
                         </p>
-                      ) : null}
-                      <div className="mt-1">
-                        <Pill tone="neutral">
-                          {slot.status === "ready"
-                            ? "Готово"
-                            : slot.status === "draft"
-                              ? "Черновик"
-                              : "Идея"}
-                        </Pill>
-                      </div>
-                    </button>
+                        {slot.description ? (
+                          <p className="mt-0.5 line-clamp-2 text-[10px] text-slate-500">
+                            {slot.description}
+                          </p>
+                        ) : null}
+                        <div className="mt-1">
+                          <Pill tone="neutral">
+                            {slot.status === "ready"
+                              ? "Готово"
+                              : slot.status === "draft"
+                                ? "Черновик"
+                                : "Идея"}
+                          </Pill>
+                        </div>
+                      </button>
+                      <PlanCrudButtons
+                        compact
+                        deleting={deleteLoadingId === slot.id}
+                        onEdit={() => openModal(slot, "edit")}
+                        onDelete={() => handleDelete(slot.id)}
+                      />
+                    </div>
                   </div>
                 </div>
               ))}
@@ -1493,7 +1832,7 @@ export function ContentPlanPage() {
       <details className="group rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-slate-900 marker:content-none dark:text-white [&::-webkit-details-marker]:hidden">
           <span className="flex items-center justify-between gap-2">
-            <span>История постов</span>
+            <span>Сохранённые записи</span>
             <span className="text-xs font-normal text-slate-500">
               {slots.length} записей
             </span>
@@ -1501,19 +1840,14 @@ export function ContentPlanPage() {
         </summary>
         <div className="border-t border-slate-100 px-4 py-3 dark:border-slate-800">
           <p className="mb-3 text-[11px] text-slate-500">
-            Клик по карточке — полный просмотр. Значок «⠿»: перетащите в другой
-            день или колонку недели — создаётся копия; исходная карточка
-            остаётся. То же из календаря: тяните между днями и неделями.
+            Все запланированные единицы контента. Нажмите на запись, чтобы открыть
+            подробности. Перетащите карточку в другой день, чтобы скопировать.
           </p>
           <ul className="space-y-2">
             {slots.map((slot) => (
               <li
                 key={`hist-${slot.id}`}
-                onClick={(e) => {
-                  if (e.target.closest("[data-acp-drag]")) return;
-                  setHistoryModalSlot(slot);
-                }}
-                className="cursor-pointer rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-800/40"
+                className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-800/40"
               >
                 <div className="flex gap-2">
                   <span
@@ -1535,37 +1869,46 @@ export function ContentPlanPage() {
                   >
                     ⠿
                   </span>
-                  {slot.thumbnail ? (
-                    <img
-                      src={slot.thumbnail}
-                      alt=""
-                      className="h-14 w-14 shrink-0 rounded-lg object-cover"
-                    />
-                  ) : null}
-                  <div className="min-w-0 flex-1 text-left">
-                    <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
-                      <span className="font-semibold text-slate-700 dark:text-slate-200">
-                        {slot.day}
-                      </span>
-                      <span>·</span>
-                      <span>нед. {slot.week ?? 1}</span>
-                      <Pill tone="neutral">
-                        {slot.status === "ready"
-                          ? "Готово"
-                          : slot.status === "draft"
-                            ? "Черновик"
-                            : "Идея"}
-                      </Pill>
-                    </div>
-                    <p className="mt-1 font-medium text-slate-900 dark:text-white">
-                      {slot.title}
-                    </p>
-                    {slot.description ? (
-                      <p className="mt-0.5 line-clamp-2 text-slate-600 dark:text-slate-300">
-                        {slot.description}
-                      </p>
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 gap-2 text-left"
+                    onClick={() => openModal(slot)}
+                  >
+                    {slot.thumbnail ? (
+                      <img
+                        src={slot.thumbnail}
+                        alt=""
+                        className="h-14 w-14 shrink-0 rounded-lg object-cover"
+                      />
                     ) : null}
-                  </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500">
+                        {slot.format ? <Pill tone="sky">{slot.format}</Pill> : null}
+                        <span>{slot.day}</span>
+                        <Pill tone="neutral">
+                          {slot.status === "ready"
+                            ? "Готово"
+                            : slot.status === "draft"
+                              ? "Черновик"
+                              : "Идея"}
+                        </Pill>
+                      </div>
+                      <p className="mt-1 font-medium text-slate-900 dark:text-white">
+                        {slot.title}
+                      </p>
+                      {slot.description ? (
+                        <p className="mt-0.5 line-clamp-2 text-slate-600 dark:text-slate-300">
+                          {slot.description}
+                        </p>
+                      ) : null}
+                    </div>
+                  </button>
+                  <PlanCrudButtons
+                    compact
+                    deleting={deleteLoadingId === slot.id}
+                    onEdit={() => openModal(slot, "edit")}
+                    onDelete={() => handleDelete(slot.id)}
+                  />
                 </div>
               </li>
             ))}
@@ -1573,100 +1916,37 @@ export function ContentPlanPage() {
         </div>
       </details>
 
-      {historyModalSlot && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="history-modal-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/50 dark:bg-black/60"
-            aria-label="Закрыть просмотр"
-            onClick={() => setHistoryModalSlot(null)}
-          />
-          <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex items-start justify-between gap-3">
-              <h3
-                id="history-modal-title"
-                className="pr-2 text-lg font-bold text-slate-900 dark:text-white"
-              >
-                {historyModalSlot.title}
-              </h3>
-              <button
-                type="button"
-                onClick={() => setHistoryModalSlot(null)}
-                className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                Закрыть
-              </button>
-            </div>
-            {historyModalSlot.thumbnail ? (
-              <img
-                src={historyModalSlot.thumbnail}
-                alt=""
-                className="mt-4 w-full max-h-52 rounded-xl object-cover"
-              />
-            ) : null}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Pill tone="neutral">
-                {historyModalSlot.status === "ready"
-                  ? "Готово"
-                  : historyModalSlot.status === "draft"
-                    ? "Черновик"
-                    : "Идея"}
-              </Pill>
-              {historyModalSlot.format ? (
-                <Pill tone="sky">{historyModalSlot.format}</Pill>
-              ) : null}
-            </div>
-            <dl className="mt-3 space-y-1 text-xs text-slate-600 dark:text-slate-300">
-              <div className="flex gap-2">
-                <dt className="text-slate-500">День</dt>
-                <dd className="font-medium text-slate-800 dark:text-slate-100">
-                  {historyModalSlot.day}
-                </dd>
-              </div>
-              <div className="flex gap-2">
-                <dt className="text-slate-500">Неделя</dt>
-                <dd className="font-medium text-slate-800 dark:text-slate-100">
-                  {historyModalSlot.week ?? 1}
-                </dd>
-              </div>
-              <div className="flex gap-2">
-                <dt className="text-slate-500">Идентификатор</dt>
-                <dd className="font-mono text-[11px] text-slate-700 dark:text-slate-200">
-                  {historyModalSlot.id}
-                </dd>
-              </div>
-            </dl>
-            {historyModalSlot.tags ? (
-              <p className="mt-2 text-xs text-sky-800 dark:text-sky-200">
-                {historyModalSlot.tags}
-              </p>
-            ) : null}
-            <div className="mt-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Описание
-              </p>
-              <p className="mt-1 text-sm text-slate-700 dark:text-slate-200">
-                {historyModalSlot.description?.trim() || "—"}
-              </p>
-            </div>
-            <div className="mt-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Содержание
-              </p>
-              <div className="mt-1 max-h-64 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/80 p-3 text-sm text-slate-800 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-100">
-                <pre className="whitespace-pre-wrap font-sans">
-                  {historyModalSlot.content?.trim() ||
-                    "Расширенный текст не задан."}
-                </pre>
-              </div>
-            </div>
-          </div>
-        </div>
+      {modalSlot && (
+        <PlanItemModal
+          slot={modalSlot}
+          mode={modalMode}
+          editTitle={editTitle}
+          editFormat={editFormat}
+          editDescription={editDescription}
+          editTitleTouched={editTitleTouched}
+          onTitleBlur={() => setEditTitleTouched(true)}
+          saving={saving}
+          saveError={saveError}
+          onClose={closeModal}
+          onStartEdit={() => {
+            setModalMode("edit");
+            setEditTitle(modalSlot.title);
+            setEditFormat(modalSlot.formatKey || "post");
+            setEditDescription(modalSlot.description || "");
+            setEditTitleTouched(false);
+            setSaveError("");
+          }}
+          onCancelEdit={() => {
+            setModalMode("view");
+            setSaveError("");
+          }}
+          onEditTitle={setEditTitle}
+          onEditFormat={setEditFormat}
+          onEditDescription={setEditDescription}
+          onSave={handleSaveEdit}
+          onDelete={() => handleDelete(modalSlot.id)}
+          deleting={deleteLoadingId === modalSlot.id}
+        />
       )}
     </div>
   );
@@ -1676,6 +1956,23 @@ export function ContentPlanPage() {
 
 export function SettingsPage() {
   const { dark, toggleTheme } = useTheme();
+  const { userProfile, socialAccounts, loading, error, refresh } = useAppData();
+
+  const instagramAccount = socialAccounts.find(
+    (a) => a.platform === "instagram"
+  );
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <DataLoading />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <DataError message={error} onRetry={refresh} />;
+  }
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
@@ -1723,7 +2020,11 @@ export function SettingsPage() {
                   {net}
                 </p>
                 <p className="text-xs text-slate-500">
-                  {i === 0 ? "Подключено · @anna_content" : "Не подключено"}
+                  {i === 0
+                    ? instagramAccount
+                      ? `Подключено · @${instagramAccount.username || userProfile.handle.replace("@", "")}`
+                      : "Не подключено"
+                    : "Не подключено"}
                 </p>
               </div>
               <button
@@ -1796,8 +2097,7 @@ export function SettingsPage() {
 
 export function SinglePostPage() {
   const { postId } = useParams();
-  const post = posts.find((p) => p.id === postId);
-  const detail = singlePostDetail[postId] ?? singlePostDetail.p1;
+  const { loading, error, refresh, posts, getPostDetail } = useAppData();
   const { duplicateIdeaToPlan, generateFollowUp, followUpsByPost } = usePlan();
   const [toast, setToast] = useState(null);
 
@@ -1807,10 +2107,25 @@ export function SinglePostPage() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
-  if (!post) {
+  if (loading) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <DataLoading />
+      </div>
+    );
+  }
+
+  if (error) {
+    return <DataError message={error} onRetry={refresh} />;
+  }
+
+  const post = posts.find((p) => p.id === postId);
+  const detail = getPostDetail(postId);
+
+  if (!post || !detail) {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
-        <p className="text-slate-600">Пост не найден в mock-данных.</p>
+        <DataEmpty message="Пост не найден" />
         <Link to="/app" className="mt-4 inline-block text-sky-600">
           В обзор
         </Link>
@@ -1819,6 +2134,15 @@ export function SinglePostPage() {
   }
 
   const followList = followUpsByPost[post.id] ?? [];
+
+  const handleDuplicate = async () => {
+    try {
+      await duplicateIdeaToPlan(post);
+      setToast("plan");
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   return (
     <div className="relative space-y-6">
@@ -1901,10 +2225,7 @@ export function SinglePostPage() {
             </h3>
             <button
               type="button"
-              onClick={() => {
-                duplicateIdeaToPlan(post);
-                setToast("plan");
-              }}
+              onClick={handleDuplicate}
               className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-sm font-semibold dark:border-slate-700"
             >
               Дублировать идею в контент-план

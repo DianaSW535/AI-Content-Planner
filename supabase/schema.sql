@@ -29,6 +29,7 @@ CREATE TYPE public.post_format AS ENUM (
   'carousel',
   'stories',
   'post',
+  'podcast',
   'other'
 );
 
@@ -286,6 +287,7 @@ CREATE TABLE public.content_plan_items (
   title TEXT NOT NULL,
   description TEXT,
   content TEXT,
+  format public.post_format,
   -- Дата в календаре: одна карточка = один день публикации
   scheduled_date DATE NOT NULL,
   status public.plan_item_status NOT NULL DEFAULT 'idea',
@@ -583,7 +585,12 @@ GRANT USAGE ON TYPE public.plan_horizon TO authenticated;
 GRANT USAGE ON TYPE public.plan_item_status TO authenticated;
 
 -- =============================================================================
--- Готово. После запуска проверьте в Table Editor, что созданы 7 таблиц:
+-- Миграция для уже развёрнутой БД (выполните в SQL Editor при необходимости):
+--
+-- ALTER TYPE public.post_format ADD VALUE IF NOT EXISTS 'podcast';
+-- ALTER TABLE public.content_plan_items
+--   ADD COLUMN IF NOT EXISTS format public.post_format;
+-- =============================================================================
 --   profiles, social_accounts, posts, post_analytics,
 --   ai_recommendations, content_plans, content_plan_items
 -- В Authentication → Policies убедитесь, что RLS включён.

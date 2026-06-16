@@ -1,11 +1,11 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { AppDataProvider } from "./context/AppDataProvider.jsx";
 import {
   AuthPage,
   ContentPlanPage,
   DashboardHome,
   DashboardLayout,
   LandingPage,
-  PlanProvider,
   RecommendationsPage,
   SettingsPage,
   SinglePostPage,
@@ -13,13 +13,12 @@ import {
 } from "./pages.jsx";
 
 /**
- * V2: объединённый дашборд на /app; /app/analytics редиректит на главный экран.
- * PlanProvider — mock-состояние контент-плана для действий со страницы поста.
+ * AppDataProvider — загрузка данных из Supabase (посты, аналитика, план, профиль).
  */
 export default function App() {
   return (
     <ThemeProvider>
-      <PlanProvider>
+      <AppDataProvider>
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<AuthPage />} />
@@ -33,7 +32,7 @@ export default function App() {
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </PlanProvider>
+      </AppDataProvider>
     </ThemeProvider>
   );
 }
