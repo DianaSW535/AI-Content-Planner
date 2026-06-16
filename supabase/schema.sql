@@ -272,6 +272,14 @@ COMMENT ON COLUMN public.content_plans.end_date IS
 CREATE INDEX idx_content_plans_user_id ON public.content_plans (user_id);
 CREATE INDEX idx_content_plans_date_range ON public.content_plans (user_id, start_date, end_date);
 
+-- Не более одного активного плана на пользователя
+CREATE UNIQUE INDEX idx_content_plans_one_active_per_user
+  ON public.content_plans (user_id)
+  WHERE is_active = TRUE;
+
+COMMENT ON INDEX idx_content_plans_one_active_per_user IS
+  'Гарантирует один is_active = TRUE план на user_id.';
+
 CREATE TRIGGER content_plans_set_updated_at
   BEFORE UPDATE ON public.content_plans
   FOR EACH ROW
@@ -287,7 +295,7 @@ CREATE TABLE public.content_plan_items (
   title TEXT NOT NULL,
   description TEXT,
   content TEXT,
-  format public.post_format,
+  format public.post_format NOT NULL DEFAULT 'post',
   -- Дата в календаре: одна карточка = один день публикации
   scheduled_date DATE NOT NULL,
   status public.plan_item_status NOT NULL DEFAULT 'idea',
@@ -590,8 +598,15 @@ GRANT USAGE ON TYPE public.plan_item_status TO authenticated;
 -- ALTER TYPE public.post_format ADD VALUE IF NOT EXISTS 'podcast';
 -- ALTER TABLE public.content_plan_items
 --   ADD COLUMN IF NOT EXISTS format public.post_format;
+-- UPDATE public.content_plan_items SET format = 'post' WHERE format IS NULL;
+-- ALTER TABLE public.content_plan_items
+--   ALTER COLUMN format SET DEFAULT 'post',
+--   ALTER COLUMN format SET NOT NULL;
+-- CREATE UNIQUE INDEX IF NOT EXISTS idx_content_plans_one_active_per_user
+--   ON public.content_plans (user_id)
+--   WHERE is_active = TRUE;
 -- =============================================================================
---   profiles, social_accounts, posts, post_analytics,
+-- Готово. После запуска проверьте в Table Editor, что созданы 7 таблиц:
 --   ai_recommendations, content_plans, content_plan_items
 -- В Authentication → Policies убедитесь, что RLS включён.
 -- =============================================================================

@@ -438,7 +438,7 @@ export function AppDataProvider({ children }) {
         content: src.content,
         scheduled_date,
         status: src.status,
-        format: src.formatKey || null,
+        format: src.formatKey || "post",
         source_item_id: sourceId,
         post_id: src.post_id || null,
       });
