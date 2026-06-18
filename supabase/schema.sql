@@ -83,6 +83,9 @@ CREATE TABLE public.profiles (
   display_name TEXT,
   handle TEXT,
   avatar_url TEXT,
+  CONSTRAINT profiles_display_name_not_blank CHECK (
+    display_name IS NULL OR length(trim(display_name)) > 0
+  ),
   plan_tier TEXT NOT NULL DEFAULT 'free'
     CHECK (plan_tier IN ('free', 'pro', 'enterprise')),
   theme_preference TEXT NOT NULL DEFAULT 'system'
@@ -109,11 +112,24 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
+DECLARE
+  v_name TEXT := trim(
+    COALESCE(
+      NEW.raw_user_meta_data ->> 'display_name',
+      NEW.raw_user_meta_data ->> 'full_name',
+      ''
+    )
+  );
 BEGIN
+  IF length(v_name) = 0 THEN
+    RAISE EXCEPTION 'display_name is required'
+      USING ERRCODE = '23514';
+  END IF;
+
   INSERT INTO public.profiles (id, display_name, avatar_url)
   VALUES (
     NEW.id,
-    COALESCE(NEW.raw_user_meta_data ->> 'display_name', NEW.raw_user_meta_data ->> 'full_name'),
+    v_name,
     NEW.raw_user_meta_data ->> 'avatar_url'
   );
   RETURN NEW;
@@ -296,6 +312,7 @@ CREATE TABLE public.content_plan_items (
   description TEXT,
   content TEXT,
   format public.post_format NOT NULL DEFAULT 'post',
+  CONSTRAINT content_plan_items_title_not_blank CHECK (length(trim(title)) > 0),
   -- Дата в календаре: одна карточка = один день публикации
   scheduled_date DATE NOT NULL,
   status public.plan_item_status NOT NULL DEFAULT 'idea',
@@ -602,6 +619,18 @@ GRANT USAGE ON TYPE public.plan_item_status TO authenticated;
 -- ALTER TABLE public.content_plan_items
 --   ALTER COLUMN format SET DEFAULT 'post',
 --   ALTER COLUMN format SET NOT NULL;
+-- ALTER TABLE public.content_plan_items
+--   DROP CONSTRAINT IF EXISTS content_plan_items_title_not_blank;
+-- ALTER TABLE public.content_plan_items
+--   ADD CONSTRAINT content_plan_items_title_not_blank
+--   CHECK (length(trim(title)) > 0);
+-- ALTER TABLE public.profiles
+--   DROP CONSTRAINT IF EXISTS profiles_display_name_not_blank;
+-- ALTER TABLE public.profiles
+--   ADD CONSTRAINT profiles_display_name_not_blank CHECK (
+--     display_name IS NULL OR length(trim(display_name)) > 0
+--   );
+-- CREATE OR REPLACE FUNCTION public.handle_new_user() ... (см. определение выше)
 -- CREATE UNIQUE INDEX IF NOT EXISTS idx_content_plans_one_active_per_user
 --   ON public.content_plans (user_id)
 --   WHERE is_active = TRUE;

@@ -24,6 +24,19 @@ import {
   scheduledDateFromWeekday,
   toLocalDateString,
 } from "../api/mappers.js";
+import {
+  ACCESS_DENIED_MESSAGE,
+  formatUserError,
+  trimText,
+  validatePlanFormat,
+  validatePlanItemInsert,
+  validatePlanSchedule,
+  validatePlanTitle,
+} from "../lib/validation.js";
+
+function throwDbError(err) {
+  if (err) throw new Error(formatUserError(err));
+}
 
 /* ---------- Общий контекст данных приложения + контент-план ---------- */
 
@@ -53,7 +66,7 @@ export function usePlan() {
   };
 }
 
-export function AppDataProvider({ children }) {
+export function AppDataProvider({ children, previewMode = false }) {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -136,7 +149,9 @@ export function AppDataProvider({ children }) {
       setSlots(mapped);
       return plan.id;
     } catch (e) {
-      setPlanError("Ошибка загрузки данных. Попробуйте позже.");
+      setPlanError(
+        formatUserError(e, "Ошибка загрузки данных. Попробуйте позже.")
+      );
       setSlots([]);
       setPlanId(null);
       return null;
@@ -146,6 +161,18 @@ export function AppDataProvider({ children }) {
   }, []);
 
   const loadAll = useCallback(async () => {
+    if (previewMode) {
+      setProfile(null);
+      setPosts([]);
+      setRecommendations([]);
+      setAnalyticsRows([]);
+      setSlots([]);
+      setPlanId(null);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     if (!userId) {
       setProfile(null);
       setPosts([]);
@@ -220,13 +247,20 @@ export function AppDataProvider({ children }) {
 
       await loadPlan(userId);
     } catch (e) {
-      setError("Ошибка загрузки данных. Попробуйте позже.");
+      setError(formatUserError(e, "Ошибка загрузки данных. Попробуйте позже."));
     } finally {
       setLoading(false);
     }
-  }, [userId, loadPlan]);
+  }, [previewMode, userId, loadPlan]);
 
   useEffect(() => {
+    if (previewMode) {
+      setSession(null);
+      setAuthReady(true);
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setAuthReady(true);
@@ -240,7 +274,7 @@ export function AppDataProvider({ children }) {
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, [previewMode]);
 
   useEffect(() => {
     loadAll();
@@ -248,16 +282,17 @@ export function AppDataProvider({ children }) {
 
   const refresh = useCallback(() => loadAll(), [loadAll]);
   const refreshPlan = useCallback(() => {
+    if (previewMode) return Promise.resolve();
     if (userId) return loadPlan(userId);
     return Promise.resolve();
-  }, [userId, loadPlan]);
+  }, [previewMode, userId, loadPlan]);
 
   const signIn = useCallback(async (email, password) => {
     const { data, error: err } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    if (err) throw err;
+    if (err) throw new Error(formatUserError(err));
     if (data.session) setSession(data.session);
     return data.session;
   }, []);
@@ -270,7 +305,7 @@ export function AppDataProvider({ children }) {
         data: { display_name: displayName },
       },
     });
-    if (err) throw err;
+    if (err) throw new Error(formatUserError(err));
     if (data.session) setSession(data.session);
     return data.session;
   }, []);
@@ -280,15 +315,27 @@ export function AppDataProvider({ children }) {
   }, []);
 
   const userProfile = useMemo(
-    () => ({
-      name: profile?.display_name || session?.user?.email?.split("@")[0] || "Пользователь",
-      handle: profile?.handle || "@user",
-      avatar:
-        profile?.avatar_url ||
-        `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId || "guest"}`,
-      plan: profile?.plan_tier === "pro" ? "Pro" : "Free",
-    }),
-    [profile, session, userId]
+    () =>
+      previewMode
+        ? {
+            name: "Гость",
+            handle: "@preview",
+            avatar:
+              "https://api.dicebear.com/7.x/avataaars/svg?seed=preview",
+            plan: "Просмотр",
+          }
+        : {
+            name:
+              profile?.display_name ||
+              session?.user?.email?.split("@")[0] ||
+              "Пользователь",
+            handle: profile?.handle || "@user",
+            avatar:
+              profile?.avatar_url ||
+              `https://api.dicebear.com/7.x/avataaars/svg?seed=${userId || "guest"}`,
+            plan: profile?.plan_tier === "pro" ? "Pro" : "Free",
+          },
+    [previewMode, profile, session, userId]
   );
 
   const reachSeries = useMemo(
@@ -324,6 +371,9 @@ export function AppDataProvider({ children }) {
 
   const duplicateIdeaToPlan = useCallback(
     async (item) => {
+      if (previewMode) {
+        throw new Error("Войдите, чтобы добавлять записи в план");
+      }
       const uid = await getActiveUserId();
       let activePlanId = planId;
       if (!activePlanId) {
@@ -332,46 +382,76 @@ export function AppDataProvider({ children }) {
       }
       if (!activePlanId) throw new Error("Контент-план не загружен");
 
-      const title = item.title?.startsWith("Идея:")
+      const rawTitle = item.title?.startsWith("Идея:")
         ? item.title
-        : `Идея: ${item.title}`;
+        : `Идея: ${item.title ?? ""}`;
       const formatDb = posts.find((p) => p.id === item.id)?.format || "post";
+      const horizon = "week";
+      const day = "Сб";
+      const scheduled_date = scheduledDateFromWeekday(day);
+
+      const validationErr = validatePlanItemInsert({
+        title: rawTitle,
+        format: formatDb,
+        horizon,
+        day,
+        week: 1,
+        scheduled_date,
+      });
+      if (validationErr) throw new Error(validationErr);
+
+      const trimmedTitle = trimText(rawTitle);
 
       const { error: err } = await supabase.from("content_plan_items").insert({
         content_plan_id: activePlanId,
-        title,
+        title: trimmedTitle,
         description: item.detail || item.description || "",
         content: item.detail || item.content || item.title || "",
-        scheduled_date: scheduledDateFromWeekday("Сб"),
+        scheduled_date,
         status: "idea",
         format: formatDb,
         post_id:
           item.source_post_id ??
           (posts.some((p) => p.id === item.id) ? item.id : null),
       });
-      if (err) throw err;
+      throwDbError(err);
       if (item.id && recommendations.some((r) => r.id === item.id)) {
-        await supabase
+        const { error: recErr } = await supabase
           .from("ai_recommendations")
           .update({ is_added_to_plan: true })
           .eq("id", item.id);
+        throwDbError(recErr);
       }
       await loadPlan(uid);
       await loadAll();
     },
-    [planId, getActiveUserId, loadPlan, loadAll, recommendations, posts]
+    [previewMode, planId, getActiveUserId, loadPlan, loadAll, recommendations, posts]
   );
 
-  const generateFollowUp = useCallback((post) => {
-    const line = `Часть 2: «${post.title}» — ответы на топ-комментарии + опрос`;
-    setFollowUpsByPost((prev) => ({
-      ...prev,
-      [post.id]: [...(prev[post.id] || []), line],
-    }));
-  }, []);
+  const generateFollowUp = useCallback(
+    (post) => {
+      if (previewMode) return;
+      const line = `Часть 2: «${post.title}» — ответы на топ-комментарии + опрос`;
+      setFollowUpsByPost((prev) => ({
+        ...prev,
+        [post.id]: [...(prev[post.id] || []), line],
+      }));
+    },
+    [previewMode]
+  );
 
   const addManualSlot = useCallback(
     async ({ title, description, day, week, horizon = "week", format = "post" }) => {
+      if (previewMode) {
+        throw new Error("Войдите, чтобы добавлять записи в план");
+      }
+      const titleErr = validatePlanTitle(title);
+      if (titleErr) throw new Error(titleErr);
+      const formatErr = validatePlanFormat(format);
+      if (formatErr) throw new Error(formatErr);
+      const scheduleErr = validatePlanSchedule({ horizon, day, week });
+      if (scheduleErr) throw new Error(scheduleErr);
+
       const uid = await getActiveUserId();
       let activePlanId = planId;
       if (!activePlanId) {
@@ -385,12 +465,25 @@ export function AppDataProvider({ children }) {
           ? scheduledDateFromWeekday(day)
           : scheduledDateFromMonthWeek(week, day);
 
+      const validationErr = validatePlanItemInsert({
+        title,
+        format,
+        horizon,
+        day,
+        week,
+        scheduled_date,
+      });
+      if (validationErr) throw new Error(validationErr);
+
+      const trimmedTitle = trimText(title);
+      const trimmedDescription = trimText(description);
+
       const tempId = `temp-${Date.now()}`;
       const optimistic = mapPlanItemToSlot({
         id: tempId,
-        title: title.trim(),
-        description: (description || "").trim(),
-        content: (description || "").trim() || "Текст поста будет добавлен позже.",
+        title: trimmedTitle,
+        description: trimmedDescription,
+        content: trimmedDescription || "Текст поста будет добавлен позже.",
         scheduled_date,
         status: "draft",
         format,
@@ -400,25 +493,26 @@ export function AppDataProvider({ children }) {
       try {
         const { error: err } = await supabase.from("content_plan_items").insert({
           content_plan_id: activePlanId,
-          title: title.trim(),
-          description: (description || "").trim(),
-          content: (description || "").trim() || "Текст поста будет добавлен позже.",
+          title: trimmedTitle,
+          description: trimmedDescription,
+          content: trimmedDescription || "Текст поста будет добавлен позже.",
           scheduled_date,
           status: "draft",
           format,
         });
-        if (err) throw err;
+        throwDbError(err);
         await loadPlan(uid);
       } catch (e) {
         setSlots((prev) => prev.filter((s) => s.id !== tempId));
-        throw e;
+        throw new Error(formatUserError(e));
       }
     },
-    [planId, getActiveUserId, loadPlan]
+    [previewMode, planId, getActiveUserId, loadPlan]
   );
 
   const copySlotToCell = useCallback(
     async ({ sourceId, day, week, horizon = "week" }) => {
+      if (previewMode) return;
       const uid = await getActiveUserId();
       let activePlanId = planId;
       if (!activePlanId) {
@@ -428,32 +522,58 @@ export function AppDataProvider({ children }) {
       if (!activePlanId) throw new Error("Контент-план не загружен");
 
       const src = slots.find((s) => s.id === sourceId);
-      if (!src) return;
+      if (!src) throw new Error(ACCESS_DENIED_MESSAGE);
+
       const titleBase = String(src.title).replace(/\s+\(копия\)$/, "").trim();
+      const title = `${titleBase} (копия)`;
+      const format = src.formatKey || "post";
       const scheduled_date = scheduledDateForDrop({ day, week, horizon });
+
+      const validationErr = validatePlanItemInsert({
+        title,
+        format,
+        horizon,
+        day,
+        week,
+        scheduled_date,
+      });
+      if (validationErr) throw new Error(validationErr);
+
+      const trimmedTitle = trimText(title);
+
       const { error: err } = await supabase.from("content_plan_items").insert({
         content_plan_id: activePlanId,
-        title: `${titleBase} (копия)`,
+        title: trimmedTitle,
         description: src.description,
         content: src.content,
         scheduled_date,
         status: src.status,
-        format: src.formatKey || "post",
+        format,
         source_item_id: sourceId,
         post_id: src.post_id || null,
       });
-      if (err) throw err;
+      throwDbError(err);
       await loadPlan(uid);
     },
-    [planId, slots, getActiveUserId, loadPlan]
+    [previewMode, planId, slots, getActiveUserId, loadPlan]
   );
 
   const updatePlanItem = useCallback(
     async (id, { title, format, description }) => {
-      const trimmedTitle = title?.trim();
-      if (!trimmedTitle) {
-        throw new Error("Поле не может быть пустым");
+      if (previewMode) {
+        throw new Error("Войдите, чтобы редактировать записи");
       }
+      if (!slots.some((s) => s.id === id)) {
+        throw new Error(ACCESS_DENIED_MESSAGE);
+      }
+      const titleErr = validatePlanTitle(title);
+      if (titleErr) throw new Error(titleErr);
+      if (format !== undefined) {
+        const formatErr = validatePlanFormat(format);
+        if (formatErr) throw new Error(formatErr);
+      }
+
+      const trimmedTitle = trimText(title);
 
       const prev = slots;
       setSlots((current) =>
@@ -476,23 +596,30 @@ export function AppDataProvider({ children }) {
         const payload = { title: trimmedTitle };
         if (format) payload.format = format;
         if (description !== undefined) {
-          payload.description = description.trim();
-          payload.content = description.trim() || "Текст поста будет добавлен позже.";
+          const trimmedDescription = trimText(description);
+          payload.description = trimmedDescription;
+          payload.content = trimmedDescription || "Текст поста будет добавлен позже.";
         }
         const { error: err } = await supabase
           .from("content_plan_items")
           .update(payload)
           .eq("id", id);
-        if (err) throw err;
+        throwDbError(err);
       } catch (e) {
         setSlots(prev);
-        throw e;
+        throw new Error(formatUserError(e));
       }
     },
-    [slots]
+    [previewMode, slots]
   );
 
   const deletePlanItem = useCallback(async (id) => {
+    if (previewMode) {
+      throw new Error("Войдите, чтобы удалять записи");
+    }
+    if (!slots.some((s) => s.id === id)) {
+      throw new Error(ACCESS_DENIED_MESSAGE);
+    }
     const prev = slots;
     setSlots((current) => current.filter((s) => s.id !== id));
 
@@ -501,15 +628,16 @@ export function AppDataProvider({ children }) {
         .from("content_plan_items")
         .delete()
         .eq("id", id);
-      if (err) throw err;
+      throwDbError(err);
     } catch (e) {
       setSlots(prev);
-      throw e;
+      throw new Error(formatUserError(e));
     }
-  }, [slots]);
+  }, [previewMode, slots]);
 
   const value = useMemo(
     () => ({
+      previewMode,
       session,
       authReady,
       loading,
@@ -543,6 +671,7 @@ export function AppDataProvider({ children }) {
       refreshPlan,
     }),
     [
+      previewMode,
       session,
       authReady,
       loading,

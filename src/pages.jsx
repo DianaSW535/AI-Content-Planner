@@ -14,6 +14,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  useSearchParams,
 } from "react-router-dom";
 import {
   Area,
@@ -30,21 +31,15 @@ import {
 } from "recharts";
 import { useAppData, usePlan } from "./context/AppDataProvider.jsx";
 import { PLAN_CONTENT_TYPES } from "./api/mappers.js";
-
-/* Статичное превью на лендинге (не из БД) */
-const LANDING_PREVIEW_CARDS = [
-  { label: "Охват (7 дн.)", value: "48.2K", delta: "+12%" },
-  { label: "Вовлечённость", value: "5.4%", delta: "+0.6%" },
-];
-const LANDING_PREVIEW_CHART = [
-  { day: "Пн", reach: 4200 },
-  { day: "Вт", reach: 5100 },
-  { day: "Ср", reach: 3800 },
-  { day: "Чт", reach: 6200 },
-  { day: "Пт", reach: 7100 },
-  { day: "Сб", reach: 8900 },
-  { day: "Вс", reach: 5400 },
-];
+import {
+  validateAuthEmail,
+  validateAuthName,
+  validateAuthPassword,
+  validatePlanFormat,
+  validatePlanSchedule,
+  validatePlanTitle,
+  formatUserError,
+} from "./lib/validation.js";
 
 function DataLoading({ className = "", text = "Загрузка..." }) {
   return (
@@ -157,23 +152,6 @@ function Pill({ children, tone = "neutral" }) {
 
 const COLORS = ["#0ea5e9", "#6366f1", "#a855f7", "#14b8a6"];
 
-/** Client-side правила для формы входа / регистрации */
-function validateAuthEmail(value) {
-  const v = value.trim();
-  if (!v) return "Введите email";
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return "Некорректный email";
-  return "";
-}
-
-function validateAuthPassword(value) {
-  if (!value) return "Введите пароль";
-  if (value.length < 8) return "Минимум 8 символов";
-  if (!/[A-Za-zА-Яа-яЁё]/.test(value) || !/\d/.test(value)) {
-    return "Нужны хотя бы одна буква и одна цифра";
-  }
-  return "";
-}
-
 /** Скелетон таблицы публикаций */
 function PublicationsLoading() {
   return (
@@ -217,164 +195,35 @@ function PublicationsEmpty({ filtered }) {
 
 export function LandingPage() {
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-950">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5 lg:px-8">
-        <Logo />
-        <div className="flex items-center gap-3">
-          <Link
-            to="/login"
-            className="text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-          >
-            Войти
-          </Link>
-          <Link
-            to="/app"
-            className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-          >
-            Открыть дашборд
-          </Link>
-        </div>
-      </header>
-
-      <section className="mx-auto grid max-w-6xl gap-12 px-4 pb-20 pt-8 lg:grid-cols-2 lg:items-center lg:px-8 lg:pt-16">
-        <div>
-          <Pill tone="sky">Аналитика + AI-план для Instagram</Pill>
-          <h1 className="mt-5 text-4xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-5xl lg:text-6xl">
-            Контент-планы и метрики в одном месте
-          </h1>
-          <p className="mt-5 max-w-xl text-lg text-slate-600 dark:text-slate-300">
-            AI Content Planner помогает блогерам и малому бизнесу видеть, что
-            работает, когда публиковать и какие идеи дадут рост охвата.
-          </p>
-          <div className="mt-8 flex flex-wrap gap-3">
-            <Link
-              to="/login"
-              className="rounded-full bg-sky-600 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500"
-            >
-              Начать бесплатно
-            </Link>
-            <a
-              href="#preview"
-              className="rounded-full border border-slate-200 bg-white px-6 py-3 text-sm font-semibold text-slate-800 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
-            >
-              Посмотреть интерфейс
-            </a>
-          </div>
-          <ul className="mt-10 grid gap-4 sm:grid-cols-2">
-            {[
-              "Единый дашборд по охвату и ER",
-              "AI-рекомендации по формату и времени",
-              "Календарь публикаций с недельным планом",
-            ].map((t) => (
-              <li
-                key={t}
-                className="flex items-start gap-2 text-sm text-slate-600 dark:text-slate-300"
-              >
-                <span className="mt-0.5 text-emerald-500">✓</span>
-                {t}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div
-          id="preview"
-          className="relative rounded-3xl border border-slate-200/80 bg-gradient-to-b from-slate-50 to-white p-4 shadow-2xl shadow-slate-900/10 dark:border-slate-800 dark:from-slate-900 dark:to-slate-950"
+    <div className="flex min-h-screen flex-col items-center justify-center bg-white px-4 dark:bg-slate-950">
+      <Logo />
+      <h1 className="mt-8 text-center text-3xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-4xl">
+        Контент-планы и метрики в одном месте
+      </h1>
+      <p className="mt-4 max-w-md text-center text-lg text-slate-600 dark:text-slate-300">
+        AI Content Planner помогает видеть, что работает, когда публиковать и
+        какие идеи дадут рост охвата.
+      </p>
+      <div className="mt-10 flex w-full max-w-md flex-col gap-3 sm:max-w-none sm:flex-row sm:flex-wrap sm:justify-center">
+        <Link
+          to="/login"
+          className="rounded-full bg-sky-600 px-8 py-3 text-center text-sm font-semibold uppercase tracking-wide text-white shadow-lg shadow-sky-600/30 hover:bg-sky-500"
         >
-          <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-sky-400/30 blur-2xl" />
-          <div className="absolute -bottom-8 -left-8 h-28 w-28 rounded-full bg-indigo-400/20 blur-2xl" />
-          <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-              <span className="text-xs font-medium text-slate-500">
-                Превью дашборда
-              </span>
-              <Pill tone="emerald">Превью</Pill>
-            </div>
-            <div className="grid gap-3 p-4 sm:grid-cols-2">
-              {LANDING_PREVIEW_CARDS.map((c) => (
-                <div
-                  key={c.label}
-                  className="rounded-xl border border-slate-100 bg-slate-50/80 p-4 dark:border-slate-800 dark:bg-slate-800/50"
-                >
-                  <p className="text-xs text-slate-500">{c.label}</p>
-                  <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">
-                    {c.value}
-                  </p>
-                  <p className="text-xs text-emerald-600">{c.delta}</p>
-                </div>
-              ))}
-            </div>
-            <div className="h-40 px-2 pb-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={LANDING_PREVIEW_CHART}>
-                  <defs>
-                    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#0ea5e9" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="#0ea5e9" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <Area
-                    type="monotone"
-                    dataKey="reach"
-                    stroke="#0284c7"
-                    fill="url(#g)"
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="border-t border-slate-100 bg-slate-50 py-16 dark:border-slate-800 dark:bg-slate-900/40">
-        <div className="mx-auto max-w-6xl px-4 lg:px-8">
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
-            Почему команды выбирают нас
-          </h2>
-          <div className="mt-10 grid gap-6 md:grid-cols-3">
-            {[
-              {
-                t: "Скорость решений",
-                d: "Сводка метрик и AI-подсказки без ручных таблиц.",
-              },
-              {
-                t: "Понятная аналитика",
-                d: "Графики охвата, ER и микса форматов из коробки.",
-              },
-              {
-                t: "План, который живёт",
-                d: "Календарь недели/месяца и карточки идей в одном потоке.",
-              },
-            ].map((x) => (
-              <div
-                key={x.t}
-                className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-950"
-              >
-                <h3 className="font-semibold text-slate-900 dark:text-white">
-                  {x.t}
-                </h3>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
-                  {x.d}
-                </p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-12 flex flex-wrap justify-center gap-4">
-            <Link
-              to="/login"
-              className="rounded-full bg-slate-900 px-8 py-3 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
-            >
-              Создать аккаунт
-            </Link>
-            <Link
-              to="/app"
-              className="rounded-full border border-slate-300 px-8 py-3 text-sm font-semibold text-slate-800 dark:border-slate-600 dark:text-slate-100"
-            >
-              Демо-дашборд
-            </Link>
-          </div>
-        </div>
-      </section>
+          ВОЙТИ
+        </Link>
+        <Link
+          to="/login?mode=register"
+          className="rounded-full border border-slate-200 bg-white px-8 py-3 text-center text-sm font-semibold uppercase tracking-wide text-slate-800 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-slate-600"
+        >
+          ЗАРЕГИСТРИРОВАТЬСЯ
+        </Link>
+        <Link
+          to="/preview"
+          className="rounded-full bg-slate-900 px-8 py-3 text-center text-sm font-semibold uppercase tracking-wide text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+        >
+          ПОСМОТРЕТЬ ИНТЕРФЕЙС
+        </Link>
+      </div>
     </div>
   );
 }
@@ -382,7 +231,10 @@ export function LandingPage() {
 /* ---------- 2. Login / Register ---------- */
 
 export function AuthPage() {
-  const [mode, setMode] = useState("login");
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState(() =>
+    searchParams.get("mode") === "register" ? "register" : "login"
+  );
   const nav = useNavigate();
   const { signIn, signUp } = useAppData();
   const [email, setEmail] = useState("");
@@ -413,7 +265,7 @@ export function AuthPage() {
       password: validateAuthPassword(password),
     };
     if (mode === "register") {
-      next.name = name.trim() ? "" : "Введите имя";
+      next.name = validateAuthName(name);
     }
     setErrors(next);
     if (Object.values(next).some(Boolean)) return;
@@ -435,7 +287,9 @@ export function AuthPage() {
       }
       nav("/app");
     } catch (err) {
-      setAuthError(err.message || "Ошибка входа. Проверьте email и пароль.");
+      setAuthError(
+        formatUserError(err, "Ошибка входа. Проверьте email и пароль.")
+      );
     } finally {
       setSubmitting(false);
     }
@@ -610,35 +464,37 @@ export function AuthPage() {
 
 /* ---------- Layout: sidebar + topbar ---------- */
 
-const navItems = [
-  { to: "/app", end: true, label: "Обзор", icon: "◆" },
-  { to: "/app/recommendations", label: "AI советы", icon: "✦" },
-  { to: "/app/plan", label: "Контент-план", icon: "▤" },
-  { to: "/app/settings", label: "Профиль", icon: "◎" },
+const navItems = (basePath) => [
+  { to: basePath, end: true, label: "Обзор", icon: "◆" },
+  { to: `${basePath}/recommendations`, label: "AI советы", icon: "✦" },
+  { to: `${basePath}/plan`, label: "Контент-план", icon: "▤" },
+  { to: `${basePath}/settings`, label: "Профиль", icon: "◎" },
 ];
 
 /** Заголовок topbar по текущему URL (вложенные маршруты вроде /app/posts/:id). */
 function headerTitle(pathname) {
-  if (pathname.startsWith("/app/posts")) return "Пост: детали";
-  if (pathname.startsWith("/app/recommendations")) return "AI советы";
-  if (pathname.startsWith("/app/plan")) return "Контент-план";
-  if (pathname.startsWith("/app/settings")) return "Профиль";
-  if (pathname === "/app" || pathname === "/app/") return "Обзор";
+  const base = pathname.startsWith("/preview") ? "/preview" : "/app";
+  if (pathname.startsWith(`${base}/posts`)) return "Пост: детали";
+  if (pathname.startsWith(`${base}/recommendations`)) return "AI советы";
+  if (pathname.startsWith(`${base}/plan`)) return "Контент-план";
+  if (pathname.startsWith(`${base}/settings`)) return "Профиль";
+  if (pathname === base || pathname === `${base}/`) return "Обзор";
   return "Обзор";
 }
 
 export function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
-  const { userProfile, signOut, session, authReady } = useAppData();
+  const { previewMode, userProfile, signOut, session, authReady } = useAppData();
   const nav = useNavigate();
+  const basePath = previewMode ? "/preview" : "/app";
 
   const handleSignOut = async () => {
     await signOut();
     nav("/login");
   };
 
-  if (!authReady) {
+  if (!previewMode && !authReady) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
         <DataLoading />
@@ -646,7 +502,7 @@ export function DashboardLayout() {
     );
   }
 
-  if (!session) {
+  if (!previewMode && !session) {
     return <Navigate to="/login" replace />;
   }
 
@@ -667,7 +523,9 @@ export function DashboardLayout() {
         }`}
       >
         <div className="flex items-center justify-between px-4 py-5">
-          <Logo />
+          <Link to={previewMode ? "/" : basePath}>
+            <Logo />
+          </Link>
           <button
             type="button"
             className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 lg:hidden dark:hover:bg-slate-800"
@@ -677,7 +535,7 @@ export function DashboardLayout() {
           </button>
         </div>
         <nav className="flex-1 space-y-1 px-3">
-          {navItems.map((item) => (
+          {navItems(basePath).map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -725,7 +583,7 @@ export function DashboardLayout() {
             </button>
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-400">
-                Рабочая область
+                {previewMode ? "Режим просмотра" : "Рабочая область"}
               </p>
               <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
                 {headerTitle(location.pathname)}
@@ -733,16 +591,42 @@ export function DashboardLayout() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSignOut}
-              className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              Выйти
-            </button>
+            {previewMode ? (
+              <>
+                <Link
+                  to="/login"
+                  className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Войти
+                </Link>
+                <Link
+                  to="/"
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+                >
+                  На главную
+                </Link>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSignOut}
+                className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Выйти
+              </button>
+            )}
           </div>
         </header>
         <main className="flex-1 p-4 lg:p-8">
+          {previewMode && (
+            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100">
+              Режим просмотра: интерфейс без данных, изменения недоступны.{" "}
+              <Link to="/login" className="font-semibold underline">
+                Войдите
+              </Link>
+              , чтобы работать с контентом.
+            </div>
+          )}
           <Outlet />
         </main>
       </div>
@@ -755,6 +639,7 @@ export function DashboardLayout() {
 export function DashboardHome() {
   const [typeFilter, setTypeFilter] = useState("all");
   const {
+    previewMode,
     loading,
     error,
     refresh,
@@ -764,6 +649,7 @@ export function DashboardHome() {
     reachSeries,
     contentMix,
   } = useAppData();
+  const basePath = previewMode ? "/preview" : "/app";
 
   const filteredRows = useMemo(() => {
     if (typeFilter === "all") return posts;
@@ -886,7 +772,7 @@ export function DashboardHome() {
               posts.slice(0, 2).map((p) => (
               <li key={p.id}>
                 <Link
-                  to={`/app/posts/${p.id}`}
+                  to={`${basePath}/posts/${p.id}`}
                   className="flex gap-3 rounded-xl border border-transparent p-2 hover:border-slate-200 hover:bg-slate-50 dark:hover:border-slate-700 dark:hover:bg-slate-800/60"
                 >
                   <img
@@ -915,7 +801,7 @@ export function DashboardHome() {
               AI: кратко
             </h2>
             <Link
-              to="/app/recommendations"
+              to={`${basePath}/recommendations`}
               className="text-sm font-semibold text-sky-700 hover:underline dark:text-sky-300"
             >
               Все советы
@@ -1006,7 +892,7 @@ export function DashboardHome() {
                     <td className="px-5 py-3">{p.er}%</td>
                     <td className="px-5 py-3 text-right">
                       <Link
-                        to={`/app/posts/${p.id}`}
+                        to={`${basePath}/posts/${p.id}`}
                         className="font-semibold text-sky-600 hover:underline dark:text-sky-400"
                       >
                         Детали
@@ -1027,6 +913,7 @@ export function DashboardHome() {
 
 export function RecommendationsPage() {
   const {
+    previewMode,
     loading,
     error,
     refresh,
@@ -1036,12 +923,16 @@ export function RecommendationsPage() {
     suggestedHashtags,
   } = useAppData();
   const { duplicateIdeaToPlan } = usePlan();
+  const [planActionError, setPlanActionError] = useState("");
 
   const handleAddToPlan = async (r) => {
+    setPlanActionError("");
     try {
       await duplicateIdeaToPlan(r);
     } catch (e) {
-      console.error(e);
+      setPlanActionError(
+        formatUserError(e, "Не удалось добавить в контент-план.")
+      );
     }
   };
 
@@ -1059,6 +950,11 @@ export function RecommendationsPage() {
 
   return (
     <div className="space-y-8">
+      {planActionError && (
+        <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+          {planActionError}
+        </p>
+      )}
       <div>
         <h2 className="text-xl font-bold text-slate-900 dark:text-white">
           AI-рекомендации
@@ -1090,9 +986,10 @@ export function RecommendationsPage() {
             <button
               type="button"
               onClick={() => handleAddToPlan(r)}
-              className="mt-4 text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400"
+              disabled={previewMode}
+              className="mt-4 text-sm font-semibold text-sky-600 hover:underline disabled:cursor-not-allowed disabled:text-slate-400 disabled:no-underline dark:text-sky-400 dark:disabled:text-slate-500"
             >
-              Добавить в план →
+              {previewMode ? "Доступно после входа" : "Добавить в план →"}
             </button>
           </article>
         ))}
@@ -1217,6 +1114,7 @@ function PlanItemModal({
   onSave,
   onDelete,
   deleting,
+  readOnly = false,
 }) {
   const titleInvalid = !editTitle.trim();
 
@@ -1353,23 +1251,25 @@ function PlanItemModal({
                 {slot.description?.trim() || "—"}
               </p>
             </div>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={onStartEdit}
-                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={onDelete}
-                disabled={deleting}
-                className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/50 dark:text-rose-300"
-              >
-                {deleting ? "Deleting..." : "Delete"}
-              </button>
-            </div>
+            {!readOnly && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onStartEdit}
+                  className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 dark:border-slate-600 dark:text-slate-200"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={onDelete}
+                  disabled={deleting}
+                  className="rounded-xl border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900/50 dark:text-rose-300"
+                >
+                  {deleting ? "Deleting..." : "Delete"}
+                </button>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -1379,6 +1279,7 @@ function PlanItemModal({
 
 export function ContentPlanPage() {
   const [horizon, setHorizon] = useState("week");
+  const { previewMode } = useAppData();
   const {
     slots,
     planLoading,
@@ -1394,6 +1295,7 @@ export function ContentPlanPage() {
   const [newDescription, setNewDescription] = useState("");
   const [newContentType, setNewContentType] = useState("post");
   const [titleTouched, setTitleTouched] = useState(false);
+  const [scheduleError, setScheduleError] = useState("");
   const [targetDay, setTargetDay] = useState("Пн");
   const [targetWeek, setTargetWeek] = useState(1);
   const [modalSlot, setModalSlot] = useState(null);
@@ -1408,7 +1310,8 @@ export function ContentPlanPage() {
   const [saving, setSaving] = useState(false);
   const [deleteLoadingId, setDeleteLoadingId] = useState(null);
 
-  const titleInvalid = !newTitle.trim();
+  const titleInvalid = Boolean(validatePlanTitle(newTitle));
+  const formatInvalid = Boolean(validatePlanFormat(newContentType));
 
   const openModal = (slot, mode = "view") => {
     setModalSlot(slot);
@@ -1442,8 +1345,10 @@ export function ContentPlanPage() {
     try {
       await deletePlanItem(id);
       if (modalSlot?.id === id) closeModal();
-    } catch {
-      setActionError("Не удалось удалить запись. Попробуйте позже.");
+    } catch (err) {
+      setActionError(
+        formatUserError(err, "Не удалось удалить запись. Попробуйте позже.")
+      );
     } finally {
       setDeleteLoadingId(null);
     }
@@ -1475,7 +1380,7 @@ export function ContentPlanPage() {
       setModalMode("view");
     } catch (err) {
       setSaveError(
-        err.message || "Не удалось сохранить изменения. Попробуйте позже."
+        formatUserError(err, "Не удалось сохранить изменения. Попробуйте позже.")
       );
     } finally {
       setSaving(false);
@@ -1485,8 +1390,17 @@ export function ContentPlanPage() {
   const submitManual = async (e) => {
     e.preventDefault();
     setTitleTouched(true);
+    const titleErr = validatePlanTitle(newTitle);
+    const formatErr = validatePlanFormat(newContentType);
+    const scheduleErr = validatePlanSchedule({
+      horizon,
+      day: targetDay,
+      week: targetWeek,
+    });
+    setScheduleError(scheduleErr);
+    if (titleErr || formatErr || scheduleErr) return;
+
     const title = newTitle.trim();
-    if (!title || !newContentType) return;
     setSaving(true);
     setSaveError("");
     try {
@@ -1505,9 +1419,12 @@ export function ContentPlanPage() {
       setNewDescription("");
       setNewContentType("post");
       setTitleTouched(false);
+      setScheduleError("");
       setShowAddForm(false);
-    } catch {
-      setSaveError("Не удалось сохранить запись. Попробуйте позже.");
+    } catch (err) {
+      setSaveError(
+        formatUserError(err, "Не удалось сохранить запись. Попробуйте позже.")
+      );
     } finally {
       setSaving(false);
     }
@@ -1539,13 +1456,15 @@ export function ContentPlanPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowAddForm((v) => !v)}
-            className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-          >
-            + Добавить контент
-          </button>
+          {!previewMode && (
+            <button
+              type="button"
+              onClick={() => setShowAddForm((v) => !v)}
+              className="rounded-full bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+            >
+              + Добавить контент
+            </button>
+          )}
           <div className="flex rounded-full bg-slate-200/70 p-1 dark:bg-slate-800">
             {[
               { id: "week", label: "Неделя" },
@@ -1580,7 +1499,7 @@ export function ContentPlanPage() {
         </p>
       )}
 
-      {showAddForm && (
+      {showAddForm && !previewMode && (
         <form
           onSubmit={submitManual}
           className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
@@ -1675,6 +1594,11 @@ export function ContentPlanPage() {
               </div>
             )}
           </div>
+          {scheduleError && (
+            <p className="mt-3 text-xs text-rose-600 dark:text-rose-400">
+              {scheduleError}
+            </p>
+          )}
           {saveError && (
             <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
               {saveError}
@@ -1683,7 +1607,7 @@ export function ContentPlanPage() {
           <div className="mt-4 flex flex-wrap gap-2">
             <button
               type="submit"
-              disabled={saving || titleInvalid}
+              disabled={saving || titleInvalid || formatInvalid}
               className="rounded-xl bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {saving ? "Saving..." : "Сохранить в план"}
@@ -1726,24 +1650,46 @@ export function ContentPlanPage() {
           return (
             <div
               key={day}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "copy";
-                setDropTargetKey(dropKey);
-              }}
-              onDragLeave={() => setDropTargetKey((k) => (k === dropKey ? null : k))}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDropTargetKey(null);
-                const sourceId = e.dataTransfer.getData("text/plain");
-                if (!sourceId) return;
-                copySlotToCell({
-                  sourceId,
-                  day: dropDay,
-                  week: dropWeek,
-                  horizon,
-                });
-              }}
+              onDragOver={
+                previewMode
+                  ? undefined
+                  : (e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "copy";
+                      setDropTargetKey(dropKey);
+                    }
+              }
+              onDragLeave={
+                previewMode
+                  ? undefined
+                  : () => setDropTargetKey((k) => (k === dropKey ? null : k))
+              }
+              onDrop={
+                previewMode
+                  ? undefined
+                  : async (e) => {
+                      e.preventDefault();
+                      setDropTargetKey(null);
+                      const sourceId = e.dataTransfer.getData("text/plain");
+                      if (!sourceId) return;
+                      setActionError("");
+                      try {
+                        await copySlotToCell({
+                          sourceId,
+                          day: dropDay,
+                          week: dropWeek,
+                          horizon,
+                        });
+                      } catch (err) {
+                        setActionError(
+                          formatUserError(
+                            err,
+                            "Не удалось скопировать запись. Попробуйте позже."
+                          )
+                        );
+                      }
+                    }
+              }
               className={`flex min-h-[160px] flex-col rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-2 transition dark:border-slate-700 dark:bg-slate-900/40 ${
                 dropTargetKey === dropKey
                   ? "ring-2 ring-sky-500 ring-offset-2 ring-offset-slate-50 dark:ring-offset-slate-950"
@@ -1759,20 +1705,22 @@ export function ContentPlanPage() {
                   className="mb-2 rounded-xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-700 dark:bg-slate-900"
                 >
                   <div className="flex gap-2">
-                    <span
-                      data-acp-drag
-                      draggable
-                      onClick={(e) => e.stopPropagation()}
-                      onDragStart={(e) => {
-                        e.dataTransfer.setData("text/plain", slot.id);
-                        e.dataTransfer.effectAllowed = "copy";
-                      }}
-                      onDragEnd={() => setDropTargetKey(null)}
-                      className="shrink-0 cursor-grab select-none rounded border border-slate-200 bg-slate-50 px-1 py-1.5 text-xs text-slate-400 active:cursor-grabbing dark:border-slate-600 dark:bg-slate-800"
-                      title="Перетащить в другой день или неделю"
-                    >
-                      ⠿
-                    </span>
+                    {!previewMode && (
+                      <span
+                        data-acp-drag
+                        draggable
+                        onClick={(e) => e.stopPropagation()}
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", slot.id);
+                          e.dataTransfer.effectAllowed = "copy";
+                        }}
+                        onDragEnd={() => setDropTargetKey(null)}
+                        className="shrink-0 cursor-grab select-none rounded border border-slate-200 bg-slate-50 px-1 py-1.5 text-xs text-slate-400 active:cursor-grabbing dark:border-slate-600 dark:bg-slate-800"
+                        title="Перетащить в другой день или неделю"
+                      >
+                        ⠿
+                      </span>
+                    )}
                     <div className="min-w-0 flex-1">
                       <button
                         type="button"
@@ -1809,19 +1757,21 @@ export function ContentPlanPage() {
                           </Pill>
                         </div>
                       </button>
-                      <PlanCrudButtons
-                        compact
-                        deleting={deleteLoadingId === slot.id}
-                        onEdit={() => openModal(slot, "edit")}
-                        onDelete={() => handleDelete(slot.id)}
-                      />
+                      {!previewMode && (
+                        <PlanCrudButtons
+                          compact
+                          deleting={deleteLoadingId === slot.id}
+                          onEdit={() => openModal(slot, "edit")}
+                          onDelete={() => handleDelete(slot.id)}
+                        />
+                      )}
                     </div>
                   </div>
                 </div>
               ))}
               {slotsInCell.length === 0 && (
                 <p className="mt-auto text-[11px] text-slate-400">
-                  Перетащите карточку сюда
+                  {previewMode ? "Пусто" : "Перетащите карточку сюда"}
                 </p>
               )}
             </div>
@@ -1840,8 +1790,9 @@ export function ContentPlanPage() {
         </summary>
         <div className="border-t border-slate-100 px-4 py-3 dark:border-slate-800">
           <p className="mb-3 text-[11px] text-slate-500">
-            Все запланированные единицы контента. Нажмите на запись, чтобы открыть
-            подробности. Перетащите карточку в другой день, чтобы скопировать.
+            {previewMode
+              ? "Здесь будут все запланированные единицы контента после входа."
+              : "Все запланированные единицы контента. Нажмите на запись, чтобы открыть подробности. Перетащите карточку в другой день, чтобы скопировать."}
           </p>
           <ul className="space-y-2">
             {slots.map((slot) => (
@@ -1850,25 +1801,27 @@ export function ContentPlanPage() {
                 className="rounded-xl border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs dark:border-slate-800 dark:bg-slate-800/40"
               >
                 <div className="flex gap-2">
-                  <span
-                    data-acp-drag
-                    draggable
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                    }}
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", slot.id);
-                      e.dataTransfer.effectAllowed = "copy";
-                    }}
-                    onDragEnd={() => setDropTargetKey(null)}
-                    className="shrink-0 cursor-grab select-none rounded border border-slate-200 bg-white px-1.5 py-2 text-sm text-slate-400 active:cursor-grabbing dark:border-slate-600 dark:bg-slate-900"
-                    title="Перетащить в календарь"
-                  >
-                    ⠿
-                  </span>
+                  {!previewMode && (
+                    <span
+                      data-acp-drag
+                      draggable
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                      }}
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData("text/plain", slot.id);
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onDragEnd={() => setDropTargetKey(null)}
+                      className="shrink-0 cursor-grab select-none rounded border border-slate-200 bg-white px-1.5 py-2 text-sm text-slate-400 active:cursor-grabbing dark:border-slate-600 dark:bg-slate-900"
+                      title="Перетащить в календарь"
+                    >
+                      ⠿
+                    </span>
+                  )}
                   <button
                     type="button"
                     className="flex min-w-0 flex-1 gap-2 text-left"
@@ -1903,12 +1856,14 @@ export function ContentPlanPage() {
                       ) : null}
                     </div>
                   </button>
-                  <PlanCrudButtons
-                    compact
-                    deleting={deleteLoadingId === slot.id}
-                    onEdit={() => openModal(slot, "edit")}
-                    onDelete={() => handleDelete(slot.id)}
-                  />
+                  {!previewMode && (
+                    <PlanCrudButtons
+                      compact
+                      deleting={deleteLoadingId === slot.id}
+                      onEdit={() => openModal(slot, "edit")}
+                      onDelete={() => handleDelete(slot.id)}
+                    />
+                  )}
                 </div>
               </li>
             ))}
@@ -1919,7 +1874,7 @@ export function ContentPlanPage() {
       {modalSlot && (
         <PlanItemModal
           slot={modalSlot}
-          mode={modalMode}
+          mode={previewMode ? "view" : modalMode}
           editTitle={editTitle}
           editFormat={editFormat}
           editDescription={editDescription}
@@ -1946,6 +1901,7 @@ export function ContentPlanPage() {
           onSave={handleSaveEdit}
           onDelete={() => handleDelete(modalSlot.id)}
           deleting={deleteLoadingId === modalSlot.id}
+          readOnly={previewMode}
         />
       )}
     </div>
@@ -1956,7 +1912,8 @@ export function ContentPlanPage() {
 
 export function SettingsPage() {
   const { dark, toggleTheme } = useTheme();
-  const { userProfile, socialAccounts, loading, error, refresh } = useAppData();
+  const { previewMode, userProfile, socialAccounts, loading, error, refresh } =
+    useAppData();
 
   const instagramAccount = socialAccounts.find(
     (a) => a.platform === "instagram"
@@ -1989,19 +1946,22 @@ export function SettingsPage() {
           <div className="flex-1 space-y-2">
             <input
               defaultValue={userProfile.name}
+              readOnly={previewMode}
               className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
             />
             <input
               defaultValue={userProfile.handle}
+              readOnly={previewMode}
               className="w-full rounded-xl border border-slate-200 px-4 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
             />
           </div>
         </div>
         <button
           type="button"
-          className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white dark:bg-white dark:text-slate-900"
+          disabled={previewMode}
+          className="mt-4 rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-slate-900"
         >
-          Сохранить
+          {previewMode ? "Доступно после входа" : "Сохранить"}
         </button>
       </div>
 
@@ -2029,9 +1989,14 @@ export function SettingsPage() {
               </div>
               <button
                 type="button"
-                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+                disabled={previewMode}
+                className="rounded-full border border-slate-200 px-3 py-1 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600"
               >
-                {i === 0 ? "Настроить" : "Подключить"}
+                {previewMode
+                  ? "После входа"
+                  : i === 0
+                    ? "Настроить"
+                    : "Подключить"}
               </button>
             </li>
           ))}
@@ -2055,7 +2020,12 @@ export function SettingsPage() {
               <span className="text-sm text-slate-700 dark:text-slate-200">
                 {label}
               </span>
-              <input type="checkbox" defaultChecked className="h-4 w-4" />
+              <input
+                type="checkbox"
+                defaultChecked
+                disabled={previewMode}
+                className="h-4 w-4 disabled:cursor-not-allowed"
+              />
             </label>
           ))}
         </div>
@@ -2097,9 +2067,12 @@ export function SettingsPage() {
 
 export function SinglePostPage() {
   const { postId } = useParams();
-  const { loading, error, refresh, posts, getPostDetail } = useAppData();
+  const { previewMode, loading, error, refresh, posts, getPostDetail } =
+    useAppData();
   const { duplicateIdeaToPlan, generateFollowUp, followUpsByPost } = usePlan();
   const [toast, setToast] = useState(null);
+  const [actionError, setActionError] = useState("");
+  const basePath = previewMode ? "/preview" : "/app";
 
   useEffect(() => {
     if (!toast) return;
@@ -2126,7 +2099,7 @@ export function SinglePostPage() {
     return (
       <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center dark:border-slate-800 dark:bg-slate-900">
         <DataEmpty message="Пост не найден" />
-        <Link to="/app" className="mt-4 inline-block text-sky-600">
+        <Link to={basePath} className="mt-4 inline-block text-sky-600">
           В обзор
         </Link>
       </div>
@@ -2136,16 +2109,24 @@ export function SinglePostPage() {
   const followList = followUpsByPost[post.id] ?? [];
 
   const handleDuplicate = async () => {
+    setActionError("");
     try {
       await duplicateIdeaToPlan(post);
       setToast("plan");
     } catch (e) {
-      console.error(e);
+      setActionError(
+        formatUserError(e, "Не удалось добавить в контент-план.")
+      );
     }
   };
 
   return (
     <div className="relative space-y-6">
+      {actionError && (
+        <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+          {actionError}
+        </p>
+      )}
       {toast && (
         <div
           role="status"
@@ -2157,7 +2138,7 @@ export function SinglePostPage() {
         </div>
       )}
       <Link
-        to="/app"
+        to={basePath}
         className="text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400"
       >
         ← Назад в обзор
@@ -2223,23 +2204,32 @@ export function SinglePostPage() {
             <h3 className="font-semibold text-slate-900 dark:text-white">
               Быстрые действия
             </h3>
-            <button
-              type="button"
-              onClick={handleDuplicate}
-              className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-sm font-semibold dark:border-slate-700"
-            >
-              Дублировать идею в контент-план
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                generateFollowUp(post);
-                setToast("followup");
-              }}
-              className="mt-2 w-full rounded-xl bg-sky-600 py-2 text-sm font-semibold text-white hover:bg-sky-500"
-            >
-              Generate follow-up post
-            </button>
+            {!previewMode && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleDuplicate}
+                  className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-sm font-semibold dark:border-slate-700"
+                >
+                  Дублировать идею в контент-план
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    generateFollowUp(post);
+                    setToast("followup");
+                  }}
+                  className="mt-2 w-full rounded-xl bg-sky-600 py-2 text-sm font-semibold text-white hover:bg-sky-500"
+                >
+                  Generate follow-up post
+                </button>
+              </>
+            )}
+            {previewMode && (
+              <p className="mt-3 text-sm text-slate-500">
+                Действия доступны после входа в аккаунт.
+              </p>
+            )}
             {followList.length > 0 && (
               <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-800/40">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">

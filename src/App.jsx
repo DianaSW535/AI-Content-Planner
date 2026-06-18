@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppDataProvider } from "./context/AppDataProvider.jsx";
 import {
   AuthPage,
@@ -12,13 +12,22 @@ import {
   ThemeProvider,
 } from "./pages.jsx";
 
+function AppDataWrapper({ children }) {
+  const { pathname } = useLocation();
+  const previewMode = pathname.startsWith("/preview");
+  return (
+    <AppDataProvider previewMode={previewMode}>{children}</AppDataProvider>
+  );
+}
+
 /**
  * AppDataProvider — загрузка данных из Supabase (посты, аналитика, план, профиль).
+ * Маршруты /preview — режим просмотра без данных и без изменений.
  */
 export default function App() {
   return (
     <ThemeProvider>
-      <AppDataProvider>
+      <AppDataWrapper>
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<AuthPage />} />
@@ -30,9 +39,16 @@ export default function App() {
             <Route path="settings" element={<SettingsPage />} />
             <Route path="posts/:postId" element={<SinglePostPage />} />
           </Route>
+          <Route path="/preview" element={<DashboardLayout />}>
+            <Route index element={<DashboardHome />} />
+            <Route path="recommendations" element={<RecommendationsPage />} />
+            <Route path="plan" element={<ContentPlanPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="posts/:postId" element={<SinglePostPage />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </AppDataProvider>
+      </AppDataWrapper>
     </ThemeProvider>
   );
 }
