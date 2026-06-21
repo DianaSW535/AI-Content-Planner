@@ -1,3 +1,23 @@
-node_modules
+# dependencies
+node_modules/
+
+# build
+dist/
+
+# environment
 .env
-dist
+.env.local
+
+# Supabase temp files
+supabase/.temp/
+
+# logs
+*.log
+
+# editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
