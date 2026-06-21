@@ -24,6 +24,12 @@ export function validateAuthName(value) {
   return "";
 }
 
+export function validatePasswordConfirm(password, confirm) {
+  if (!confirm) return "Подтвердите пароль";
+  if (password !== confirm) return "Пароли не совпадают";
+  return "";
+}
+
 export function validatePlanTitle(title) {
   if (!String(title ?? "").trim()) return "Поле не может быть пустым";
   return "";
@@ -106,6 +112,39 @@ export function formatUserError(err, fallback = "Произошла ошибка
   const lower = msg.toLowerCase();
 
   if (
+    err.code === "email_not_confirmed" ||
+    lower.includes("email not confirmed")
+  ) {
+    return "Подтвердите email по ссылке из письма";
+  }
+
+  if (
+    err.code === "over_email_send_rate_limit" ||
+    lower.includes("rate limit") ||
+    lower.includes("too many requests")
+  ) {
+    return "Слишком много попыток. Попробуйте позже";
+  }
+
+  if (
+    err.code === "user_already_registered" ||
+    lower.includes("already registered") ||
+    lower.includes("already been registered")
+  ) {
+    return "Этот email уже используется";
+  }
+
+  if (
+    err.code === "otp_expired" ||
+    (lower.includes("expired") &&
+      (lower.includes("token") || lower.includes("link"))) ||
+    lower.includes("invalid flow state") ||
+    lower.includes("auth session missing")
+  ) {
+    return "Ссылка недействительна или устарела. Запросите новую";
+  }
+
+  if (
     lower.includes("content_plan_items_title_not_blank") ||
     (lower.includes("check constraint") && lower.includes("title"))
   ) {
@@ -133,6 +172,13 @@ export function formatUserError(err, fallback = "Произошла ошибка
 
   if (lower.includes("jwt") || lower.includes("not authenticated")) {
     return "Войдите в аккаунт, чтобы продолжить.";
+  }
+
+  if (
+    lower.includes("telegram") &&
+    (lower.includes("not configured") || lower.includes("не настроен"))
+  ) {
+    return "Telegram-бот не настроен. Обратитесь к администратору.";
   }
 
   // Сообщения валидации приложения и Supabase Auth — показываем как есть

@@ -1,12 +1,14 @@
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppDataProvider } from "./context/AppDataProvider.jsx";
 import {
+  AuthCallbackPage,
   AuthPage,
   ContentPlanPage,
   DashboardHome,
   DashboardLayout,
   LandingPage,
   RecommendationsPage,
+  ResetPasswordPage,
   SettingsPage,
   SinglePostPage,
   ThemeProvider,
@@ -31,6 +33,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<AuthPage />} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
           <Route path="/app" element={<DashboardLayout />}>
             <Route index element={<DashboardHome />} />
             <Route path="analytics" element={<Navigate to="/app" replace />} />

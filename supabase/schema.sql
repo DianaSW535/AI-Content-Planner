@@ -339,6 +339,86 @@ CREATE TRIGGER content_plan_items_set_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.set_updated_at();
 
+-- -----------------------------------------------------------------------------
+-- Telegram: привязка пользователя к боту (напоминания о публикации)
+-- -----------------------------------------------------------------------------
+CREATE TABLE public.user_telegram (
+  user_id UUID PRIMARY KEY REFERENCES public.profiles (id) ON DELETE CASCADE,
+  telegram_chat_id BIGINT,
+  is_connected BOOLEAN NOT NULL DEFAULT FALSE,
+  reminders_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  link_token TEXT,
+  link_token_expires_at TIMESTAMPTZ,
+  linked_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE public.user_telegram IS
+  'Привязка аккаунта к Telegram-боту для напоминаний о публикации.';
+COMMENT ON COLUMN public.user_telegram.telegram_chat_id IS
+  'Chat ID для Bot API sendMessage. Заполняется webhook после /start.';
+
+CREATE INDEX idx_user_telegram_link_token ON public.user_telegram (link_token)
+  WHERE link_token IS NOT NULL;
+
+CREATE TRIGGER user_telegram_set_updated_at
+  BEFORE UPDATE ON public.user_telegram
+  FOR EACH ROW
+  EXECUTE FUNCTION public.set_updated_at();
+
+-- Минимальная защита от повторной отправки (без истории для UI)
+CREATE TABLE public.telegram_reminders_sent (
+  content_plan_item_id UUID NOT NULL
+    REFERENCES public.content_plan_items (id) ON DELETE CASCADE,
+  scheduled_date DATE NOT NULL,
+  sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (content_plan_item_id, scheduled_date)
+);
+
+COMMENT ON TABLE public.telegram_reminders_sent IS
+  'Факт отправки напоминания: одна запись на карточку и дату. Только для cron.';
+
+-- Выборка карточек на сегодня для cron (без часовых поясов — CURRENT_DATE в БД)
+CREATE OR REPLACE FUNCTION public.get_telegram_reminders_for_today()
+RETURNS TABLE (
+  item_id UUID,
+  title TEXT,
+  scheduled_date DATE,
+  telegram_chat_id BIGINT
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    cpi.id AS item_id,
+    cpi.title,
+    cpi.scheduled_date,
+    ut.telegram_chat_id
+  FROM public.content_plan_items cpi
+  INNER JOIN public.content_plans cp ON cp.id = cpi.content_plan_id
+  INNER JOIN public.user_telegram ut ON ut.user_id = cp.user_id
+  WHERE cp.is_active = TRUE
+    AND ut.is_connected = TRUE
+    AND ut.reminders_enabled = TRUE
+    AND ut.telegram_chat_id IS NOT NULL
+    AND cpi.scheduled_date = CURRENT_DATE
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.telegram_reminders_sent trs
+      WHERE trs.content_plan_item_id = cpi.id
+        AND trs.scheduled_date = cpi.scheduled_date
+    );
+$$;
+
+COMMENT ON FUNCTION public.get_telegram_reminders_for_today() IS
+  'Карточки активного плана на сегодня с подключённым Telegram. Только для Edge Function cron.';
+
+REVOKE ALL ON FUNCTION public.get_telegram_reminders_for_today() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_telegram_reminders_for_today() TO service_role;
+
 -- =============================================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =============================================================================
@@ -353,6 +433,8 @@ ALTER TABLE public.post_analytics ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.ai_recommendations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.content_plans ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.content_plan_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.user_telegram ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.telegram_reminders_sent ENABLE ROW LEVEL SECURITY;
 
 -- -----------------------------------------------------------------------------
 -- profiles: id = auth.uid()
@@ -592,6 +674,22 @@ CREATE POLICY "content_plan_items_delete_own"
     )
   );
 
+-- -----------------------------------------------------------------------------
+-- user_telegram: пользователь видит и меняет только свою привязку
+-- -----------------------------------------------------------------------------
+CREATE POLICY "user_telegram_select_own"
+  ON public.user_telegram FOR SELECT
+  TO authenticated
+  USING (user_id = auth.uid());
+
+CREATE POLICY "user_telegram_update_own"
+  ON public.user_telegram FOR UPDATE
+  TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+-- telegram_reminders_sent: только Edge Functions (service role), без политик для authenticated
+
 -- =============================================================================
 -- Права для роли authenticated (клиент Supabase с JWT пользователя)
 -- =============================================================================
@@ -635,7 +733,11 @@ GRANT USAGE ON TYPE public.plan_item_status TO authenticated;
 --   ON public.content_plans (user_id)
 --   WHERE is_active = TRUE;
 -- =============================================================================
--- Готово. После запуска проверьте в Table Editor, что созданы 7 таблиц:
---   ai_recommendations, content_plans, content_plan_items
+-- -- Telegram MVP (для уже развёрнутой БД):
+-- -- (см. блоки CREATE TABLE user_telegram и telegram_reminders_sent выше)
+--
+-- Готово. После запуска проверьте в Table Editor, что созданы таблицы:
+--   ai_recommendations, content_plans, content_plan_items, user_telegram,
+--   telegram_reminders_sent
 -- В Authentication → Policies убедитесь, что RLS включён.
 -- =============================================================================

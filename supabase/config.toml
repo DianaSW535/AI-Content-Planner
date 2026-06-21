@@ -1,0 +1,7 @@
+# Telegram шлёт webhook без JWT Supabase — отключаем проверку для этой функции.
+[functions.telegram-webhook]
+verify_jwt = false
+
+# Cron вызывает функцию только с x-cron-secret, без JWT пользователя.
+[functions.send-daily-reminders]
+verify_jwt = false

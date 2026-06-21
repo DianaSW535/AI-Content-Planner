@@ -33,6 +33,17 @@ import {
   validatePlanSchedule,
   validatePlanTitle,
 } from "../lib/validation.js";
+import { getAuthRedirectUrls } from "../lib/authRedirects.js";
+import {
+  logAuthError,
+  logAuthRequest,
+  logAuthResponse,
+} from "../lib/authLogger.js";
+import {
+  logTelegramError,
+  logTelegramRequest,
+  logTelegramResponse,
+} from "../lib/telegramLogger.js";
 
 function throwDbError(err) {
   if (err) throw new Error(formatUserError(err));
@@ -83,6 +94,12 @@ export function AppDataProvider({ children, previewMode = false }) {
   const [planLoading, setPlanLoading] = useState(false);
   const [planError, setPlanError] = useState(null);
   const [followUpsByPost, setFollowUpsByPost] = useState({});
+
+  const [telegram, setTelegram] = useState({
+    is_connected: false,
+    reminders_enabled: true,
+    linked_at: null,
+  });
 
   const userId = session?.user?.id;
 
@@ -168,6 +185,7 @@ export function AppDataProvider({ children, previewMode = false }) {
       setAnalyticsRows([]);
       setSlots([]);
       setPlanId(null);
+      setTelegram({ is_connected: false, reminders_enabled: true, linked_at: null });
       setLoading(false);
       setError(null);
       return;
@@ -180,6 +198,7 @@ export function AppDataProvider({ children, previewMode = false }) {
       setAnalyticsRows([]);
       setSlots([]);
       setPlanId(null);
+      setTelegram({ is_connected: false, reminders_enabled: true, linked_at: null });
       setLoading(false);
       return;
     }
@@ -193,6 +212,7 @@ export function AppDataProvider({ children, previewMode = false }) {
         socialRes,
         postsRes,
         recsRes,
+        telegramRes,
       ] = await Promise.all([
         supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
         supabase.from("social_accounts").select("*").eq("user_id", userId),
@@ -207,12 +227,18 @@ export function AppDataProvider({ children, previewMode = false }) {
           .eq("user_id", userId)
           .eq("is_dismissed", false)
           .order("created_at", { ascending: false }),
+        supabase
+          .from("user_telegram")
+          .select("is_connected, reminders_enabled, linked_at")
+          .eq("user_id", userId)
+          .maybeSingle(),
       ]);
 
       if (profileRes.error) throw profileRes.error;
       if (socialRes.error) throw socialRes.error;
       if (postsRes.error) throw postsRes.error;
       if (recsRes.error) throw recsRes.error;
+      if (telegramRes.error) throw telegramRes.error;
 
       const postRows = postsRes.data || [];
       const postIds = postRows.map((p) => p.id);
@@ -244,6 +270,11 @@ export function AppDataProvider({ children, previewMode = false }) {
       setPosts(uiPosts);
       setRecommendations((recsRes.data || []).map(mapRecommendationRow));
       setAnalyticsRows(analytics);
+      setTelegram({
+        is_connected: Boolean(telegramRes.data?.is_connected),
+        reminders_enabled: telegramRes.data?.reminders_enabled !== false,
+        linked_at: telegramRes.data?.linked_at ?? null,
+      });
 
       await loadPlan(userId);
     } catch (e) {
@@ -261,14 +292,21 @@ export function AppDataProvider({ children, previewMode = false }) {
       return;
     }
 
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (error) logAuthError("getSession", error);
       setSession(data.session);
       setAuthReady(true);
     });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, newSession) => {
+    } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (import.meta.env.DEV) {
+        logAuthResponse("onAuthStateChange", {
+          event,
+          hasSession: Boolean(newSession),
+        });
+      }
       setSession(newSession);
       setAuthReady(true);
     });
@@ -288,26 +326,142 @@ export function AppDataProvider({ children, previewMode = false }) {
   }, [previewMode, userId, loadPlan]);
 
   const signIn = useCallback(async (email, password) => {
+    logAuthRequest("signInWithPassword", { email });
     const { data, error: err } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
-    if (err) throw new Error(formatUserError(err));
+    if (err) {
+      logAuthError("signInWithPassword", err, { email });
+      throw new Error(formatUserError(err, "Ошибка входа. Проверьте email и пароль."));
+    }
+    logAuthResponse("signInWithPassword", {
+      hasSession: Boolean(data.session),
+      emailConfirmed: Boolean(data.user?.email_confirmed_at),
+    });
     if (data.session) setSession(data.session);
     return data.session;
   }, []);
 
   const signUp = useCallback(async (email, password, displayName) => {
+    const { emailConfirm } = getAuthRedirectUrls();
+    logAuthRequest("signUp", { email, emailRedirectTo: emailConfirm });
     const { data, error: err } = await supabase.auth.signUp({
       email,
       password,
       options: {
         data: { display_name: displayName },
+        emailRedirectTo: emailConfirm,
       },
     });
-    if (err) throw new Error(formatUserError(err));
+    if (err) {
+      logAuthError("signUp", err, { email });
+      throw new Error(formatUserError(err, "Не удалось зарегистрироваться."));
+    }
+    logAuthResponse("signUp", {
+      hasSession: Boolean(data.session),
+      needsEmailConfirm: !data.session,
+    });
     if (data.session) setSession(data.session);
     return data.session;
+  }, []);
+
+  const resendSignupEmail = useCallback(async (email) => {
+    const { emailConfirm } = getAuthRedirectUrls();
+    logAuthRequest("resendSignup", { email, emailRedirectTo: emailConfirm });
+    const { error: err } = await supabase.auth.resend({
+      type: "signup",
+      email,
+      options: { emailRedirectTo: emailConfirm },
+    });
+    if (err) {
+      logAuthError("resendSignup", err, { email });
+      throw new Error(
+        formatUserError(err, "Не удалось отправить письмо. Попробуйте позже.")
+      );
+    }
+    logAuthResponse("resendSignup", { ok: true });
+  }, []);
+
+  const requestPasswordReset = useCallback(async (email) => {
+    const { resetPassword } = getAuthRedirectUrls();
+    logAuthRequest("resetPasswordForEmail", {
+      email,
+      redirectTo: resetPassword,
+    });
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: resetPassword,
+    });
+    if (err) {
+      logAuthError("resetPasswordForEmail", err, { email });
+      throw new Error(
+        formatUserError(err, "Не удалось отправить письмо. Попробуйте позже.")
+      );
+    }
+    logAuthResponse("resetPasswordForEmail", { ok: true });
+  }, []);
+
+  const updatePassword = useCallback(async (newPassword) => {
+    logAuthRequest("updateUser(password)");
+    const { data, error: err } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+    if (err) {
+      logAuthError("updateUser(password)", err);
+      throw new Error(
+        formatUserError(err, "Не удалось обновить пароль. Попробуйте позже.")
+      );
+    }
+    logAuthResponse("updateUser(password)", {
+      hasSession: Boolean(data.user),
+    });
+  }, []);
+
+  const completeEmailConfirmation = useCallback(async () => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+    const urlError = params.get("error_description") || params.get("error");
+
+    if (urlError) {
+      const err = new Error(decodeURIComponent(urlError.replace(/\+/g, " ")));
+      logAuthError("emailConfirmation", err);
+      throw new Error(
+        formatUserError(err, "Ссылка недействительна или устарела.")
+      );
+    }
+
+    logAuthRequest("completeEmailConfirmation", { hasCode: Boolean(code) });
+
+    const { data: existing, error: sessionErr } = await supabase.auth.getSession();
+    if (sessionErr) {
+      logAuthError("getSession(afterConfirm)", sessionErr);
+    }
+    if (existing.session) {
+      logAuthResponse("completeEmailConfirmation", {
+        hasSession: true,
+        via: "existing",
+      });
+      setSession(existing.session);
+      return existing.session;
+    }
+
+    if (code) {
+      const { data, error: err } =
+        await supabase.auth.exchangeCodeForSession(code);
+      if (err) {
+        logAuthError("exchangeCodeForSession", err);
+        throw new Error(
+          formatUserError(err, "Ссылка недействительна или устарела.")
+        );
+      }
+      logAuthResponse("exchangeCodeForSession", {
+        hasSession: Boolean(data.session),
+      });
+      if (data.session) setSession(data.session);
+      return data.session;
+    }
+
+    throw new Error("Ссылка недействительна или устарела. Запросите новую.");
   }, []);
 
   const signOut = useCallback(async () => {
@@ -635,6 +789,101 @@ export function AppDataProvider({ children, previewMode = false }) {
     }
   }, [previewMode, slots]);
 
+  const refreshTelegram = useCallback(async () => {
+    if (previewMode || !userId) return;
+    logTelegramRequest("refreshTelegram", {});
+    try {
+      const { data, error: err } = await supabase
+        .from("user_telegram")
+        .select("is_connected, reminders_enabled, linked_at")
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (err) throw err;
+      setTelegram({
+        is_connected: Boolean(data?.is_connected),
+        reminders_enabled: data?.reminders_enabled !== false,
+        linked_at: data?.linked_at ?? null,
+      });
+      logTelegramResponse("refreshTelegram", {
+        is_connected: Boolean(data?.is_connected),
+      });
+    } catch (e) {
+      logTelegramError("refreshTelegram", e);
+    }
+  }, [previewMode, userId]);
+
+  const startTelegramLink = useCallback(async () => {
+    if (previewMode) {
+      throw new Error("Доступно после входа");
+    }
+    logTelegramRequest("startTelegramLink", {});
+    const { data: sessionData, error: sessionErr } =
+      await supabase.auth.getSession();
+    if (sessionErr) {
+      logTelegramError("startTelegramLink/session", sessionErr);
+      throw new Error(formatUserError(sessionErr, "Требуется авторизация"));
+    }
+    const accessToken = sessionData.session?.access_token;
+    if (!accessToken) {
+      throw new Error("Войдите в аккаунт, чтобы продолжить.");
+    }
+
+    const { data, error: fnErr } = await supabase.functions.invoke(
+      "telegram-link",
+      {
+        body: {},
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+
+    if (fnErr) {
+      logTelegramError("startTelegramLink/invoke", fnErr);
+      throw new Error(
+        formatUserError(fnErr, "Не удалось подготовить привязку Telegram.")
+      );
+    }
+
+    if (data?.error) {
+      logTelegramError("startTelegramLink/response", { message: data.error });
+      throw new Error(data.error);
+    }
+
+    if (!data?.deepLink) {
+      throw new Error("Не удалось получить ссылку на бота.");
+    }
+
+    logTelegramResponse("startTelegramLink", { hasDeepLink: true });
+    return data.deepLink;
+  }, [previewMode]);
+
+  const setTelegramRemindersEnabled = useCallback(
+    async (enabled) => {
+      if (previewMode) {
+        throw new Error("Доступно после входа");
+      }
+      const uid = await getActiveUserId();
+      if (!uid) throw new Error("Войдите в аккаунт, чтобы продолжить.");
+
+      logTelegramRequest("setRemindersEnabled", { enabled });
+      const prev = telegram;
+      setTelegram((t) => ({ ...t, reminders_enabled: enabled }));
+
+      try {
+        const { error: err } = await supabase
+          .from("user_telegram")
+          .update({ reminders_enabled: enabled })
+          .eq("user_id", uid);
+        throwDbError(err);
+        logTelegramResponse("setRemindersEnabled", { enabled });
+      } catch (e) {
+        setTelegram(prev);
+        logTelegramError("setRemindersEnabled", e);
+        throw new Error(formatUserError(e, "Не удалось сохранить настройку."));
+      }
+    },
+    [previewMode, telegram, getActiveUserId]
+  );
+
   const value = useMemo(
     () => ({
       previewMode,
@@ -646,6 +895,10 @@ export function AppDataProvider({ children, previewMode = false }) {
       signIn,
       signUp,
       signOut,
+      resendSignupEmail,
+      requestPasswordReset,
+      updatePassword,
+      completeEmailConfirmation,
       profile,
       userProfile,
       socialAccounts,
@@ -669,6 +922,10 @@ export function AppDataProvider({ children, previewMode = false }) {
       updatePlanItem,
       deletePlanItem,
       refreshPlan,
+      telegram,
+      refreshTelegram,
+      startTelegramLink,
+      setTelegramRemindersEnabled,
     }),
     [
       previewMode,
@@ -680,6 +937,10 @@ export function AppDataProvider({ children, previewMode = false }) {
       signIn,
       signUp,
       signOut,
+      resendSignupEmail,
+      requestPasswordReset,
+      updatePassword,
+      completeEmailConfirmation,
       profile,
       userProfile,
       socialAccounts,
@@ -703,6 +964,10 @@ export function AppDataProvider({ children, previewMode = false }) {
       updatePlanItem,
       deletePlanItem,
       refreshPlan,
+      telegram,
+      refreshTelegram,
+      startTelegramLink,
+      setTelegramRemindersEnabled,
     ]
   );
 

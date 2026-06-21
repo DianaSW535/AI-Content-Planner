@@ -38,8 +38,10 @@ import {
   validatePlanFormat,
   validatePlanSchedule,
   validatePlanTitle,
+  validatePasswordConfirm,
   formatUserError,
 } from "./lib/validation.js";
+import { supabase } from "./supabaseClient.js";
 
 function DataLoading({ className = "", text = "Загрузка..." }) {
   return (
@@ -228,21 +230,40 @@ export function LandingPage() {
   );
 }
 
-/* ---------- 2. Login / Register ---------- */
+/* ---------- 2. Login / Register / Forgot password ---------- */
+
+function resolveAuthMode(searchParams) {
+  const m = searchParams.get("mode");
+  if (m === "register" || m === "forgot") return m;
+  return "login";
+}
 
 export function AuthPage() {
   const [searchParams] = useSearchParams();
-  const [mode, setMode] = useState(() =>
-    searchParams.get("mode") === "register" ? "register" : "login"
-  );
+  const [mode, setMode] = useState(() => resolveAuthMode(searchParams));
   const nav = useNavigate();
-  const { signIn, signUp } = useAppData();
+  const {
+    signIn,
+    signUp,
+    resendSignupEmail,
+    requestPasswordReset,
+  } = useAppData();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [authError, setAuthError] = useState("");
+  const [authInfo, setAuthInfo] = useState("");
+  const [checkEmail, setCheckEmail] = useState(null);
+  const [resending, setResending] = useState(false);
+
+  useEffect(() => {
+    setMode(resolveAuthMode(searchParams));
+    if (searchParams.get("reset") === "success") {
+      setAuthInfo("Пароль обновлён. Войдите с новым паролем.");
+    }
+  }, [searchParams]);
 
   const clearFieldError = (key) => {
     setErrors((e) => {
@@ -256,10 +277,55 @@ export function AuthPage() {
     setMode(m);
     setErrors({});
     setAuthError("");
+    setAuthInfo("");
+    setCheckEmail(null);
+    nav(m === "login" ? "/login" : `/login?mode=${m}`, { replace: true });
+  };
+
+  const handleResendEmail = async () => {
+    if (!checkEmail?.email) return;
+    setResending(true);
+    setAuthError("");
+    try {
+      if (checkEmail.context === "signup") {
+        await resendSignupEmail(checkEmail.email);
+      } else {
+        await requestPasswordReset(checkEmail.email);
+      }
+      setAuthInfo("Письмо отправлено повторно. Проверьте почту.");
+    } catch (err) {
+      setAuthError(
+        formatUserError(err, "Не удалось отправить письмо. Попробуйте позже.")
+      );
+    } finally {
+      setResending(false);
+    }
   };
 
   const onSubmit = async (e) => {
     e.preventDefault();
+    setAuthInfo("");
+
+    if (mode === "forgot") {
+      const emailErr = validateAuthEmail(email);
+      setErrors({ email: emailErr });
+      if (emailErr) return;
+
+      setSubmitting(true);
+      setAuthError("");
+      try {
+        await requestPasswordReset(email.trim());
+        setCheckEmail({ email: email.trim(), context: "reset" });
+      } catch (err) {
+        setAuthError(
+          formatUserError(err, "Не удалось отправить письмо. Попробуйте позже.")
+        );
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
+
     const next = {
       email: validateAuthEmail(email),
       password: validateAuthPassword(password),
@@ -273,19 +339,17 @@ export function AuthPage() {
     setSubmitting(true);
     setAuthError("");
     try {
-      let newSession = null;
       if (mode === "login") {
-        newSession = await signIn(email.trim(), password);
+        await signIn(email.trim(), password);
+        nav("/app");
       } else {
-        newSession = await signUp(email.trim(), password, name.trim());
+        const newSession = await signUp(email.trim(), password, name.trim());
+        if (!newSession) {
+          setCheckEmail({ email: email.trim(), context: "signup" });
+          return;
+        }
+        nav("/app");
       }
-      if (!newSession) {
-        setAuthError(
-          "Аккаунт создан. Подтвердите email по ссылке из письма, затем войдите."
-        );
-        return;
-      }
-      nav("/app");
     } catch (err) {
       setAuthError(
         formatUserError(err, "Ошибка входа. Проверьте email и пароль.")
@@ -300,6 +364,11 @@ export function AuthPage() {
       ? "border-rose-400 ring-rose-200 focus:ring-rose-300 dark:border-rose-500 dark:ring-rose-900/40"
       : "border-slate-200 dark:border-slate-700";
 
+  const modeTabs =
+    mode === "forgot" || checkEmail
+      ? []
+      : ["login", "register"];
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 dark:bg-slate-950 lg:flex-row">
       <div className="flex flex-1 flex-col justify-center px-6 py-12 lg:px-16">
@@ -307,144 +376,241 @@ export function AuthPage() {
           <Logo />
         </Link>
         <div className="mx-auto w-full max-w-md">
-          <div className="flex rounded-full bg-slate-200/70 p-1 dark:bg-slate-800">
-            {["login", "register"].map((m) => (
+          {checkEmail ? (
+            <div className="space-y-4">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                Проверьте почту
+              </h2>
+              <p className="text-sm text-slate-600 dark:text-slate-300">
+                {checkEmail.context === "signup"
+                  ? "Мы отправили письмо для подтверждения email на"
+                  : "Мы отправили письмо для сброса пароля на"}{" "}
+                <span className="font-medium text-slate-900 dark:text-white">
+                  {checkEmail.email}
+                </span>
+                . Перейдите по ссылке в письме, чтобы продолжить.
+              </p>
+              {authInfo && (
+                <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  {authInfo}
+                </p>
+              )}
+              {authError && (
+                <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                  {authError}
+                </p>
+              )}
               <button
-                key={m}
                 type="button"
-                onClick={() => switchMode(m)}
-                className={`flex-1 rounded-full py-2 text-sm font-semibold transition ${
-                  mode === m
-                    ? "bg-white text-slate-900 shadow dark:bg-slate-900 dark:text-white"
-                    : "text-slate-600 dark:text-slate-400"
-                }`}
+                disabled={resending}
+                onClick={handleResendEmail}
+                className="w-full rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
               >
-                {m === "login" ? "Вход" : "Регистрация"}
+                {resending ? "Отправляем…" : "Отправить письмо снова"}
               </button>
-            ))}
-          </div>
+              <button
+                type="button"
+                onClick={() => switchMode("login")}
+                className="w-full text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400"
+              >
+                Вернуться ко входу
+              </button>
+            </div>
+          ) : (
+            <>
+              {modeTabs.length > 0 && (
+                <div className="flex rounded-full bg-slate-200/70 p-1 dark:bg-slate-800">
+                  {modeTabs.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => switchMode(m)}
+                      className={`flex-1 rounded-full py-2 text-sm font-semibold transition ${
+                        mode === m
+                          ? "bg-white text-slate-900 shadow dark:bg-slate-900 dark:text-white"
+                          : "text-slate-600 dark:text-slate-400"
+                      }`}
+                    >
+                      {m === "login" ? "Вход" : "Регистрация"}
+                    </button>
+                  ))}
+                </div>
+              )}
 
-          <form onSubmit={onSubmit} className="mt-8 space-y-4" noValidate>
-            {mode === "register" && (
-              <div>
-                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                  Имя
-                </label>
-                <input
-                  value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    clearFieldError("name");
-                  }}
-                  className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-900 ${inputError("name")}`}
-                  placeholder="Как к вам обращаться"
-                  autoComplete="name"
-                />
-                {errors.name && (
-                  <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                    {errors.name}
+              {mode === "forgot" && (
+                <div className="mt-6">
+                  <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                    Восстановление пароля
+                  </h2>
+                  <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                    Введите email — мы отправим ссылку для сброса пароля.
+                  </p>
+                </div>
+              )}
+
+              <form
+                onSubmit={onSubmit}
+                className={`space-y-4 ${mode === "forgot" ? "mt-6" : "mt-8"}`}
+                noValidate
+              >
+                {mode === "register" && (
+                  <div>
+                    <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Имя
+                    </label>
+                    <input
+                      value={name}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        clearFieldError("name");
+                      }}
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-900 ${inputError("name")}`}
+                      placeholder="Как к вам обращаться"
+                      autoComplete="name"
+                    />
+                    {errors.name && (
+                      <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                        {errors.name}
+                      </p>
+                    )}
+                  </div>
+                )}
+                <div>
+                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Email
+                  </label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      clearFieldError("email");
+                    }}
+                    onBlur={() =>
+                      setErrors((e) => ({
+                        ...e,
+                        email: validateAuthEmail(email),
+                      }))
+                    }
+                    className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-900 ${inputError("email")}`}
+                    placeholder="you@example.com"
+                    autoComplete="email"
+                  />
+                  {errors.email && (
+                    <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                      {errors.email}
+                    </p>
+                  )}
+                </div>
+                {mode !== "forgot" && (
+                  <div>
+                    <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                      Пароль
+                    </label>
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value);
+                        clearFieldError("password");
+                      }}
+                      onBlur={() =>
+                        setErrors((e) => ({
+                          ...e,
+                          password: validateAuthPassword(password),
+                        }))
+                      }
+                      className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-900 ${inputError("password")}`}
+                      placeholder="Мин. 8 символов, буква и цифра"
+                      autoComplete={
+                        mode === "login" ? "current-password" : "new-password"
+                      }
+                    />
+                    {errors.password && (
+                      <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                        {errors.password}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {authInfo && (
+                  <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200">
+                    {authInfo}
                   </p>
                 )}
-              </div>
-            )}
-            <div>
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  clearFieldError("email");
-                }}
-                onBlur={() =>
-                  setErrors((e) => ({
-                    ...e,
-                    email: validateAuthEmail(email),
-                  }))
-                }
-                className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-900 ${inputError("email")}`}
-                placeholder="you@example.com"
-                autoComplete="email"
-              />
-              {errors.email && (
-                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                  {errors.email}
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                Пароль
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  clearFieldError("password");
-                }}
-                onBlur={() =>
-                  setErrors((e) => ({
-                    ...e,
-                    password: validateAuthPassword(password),
-                  }))
-                }
-                className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-900 ${inputError("password")}`}
-                placeholder="Мин. 8 символов, буква и цифра"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-              />
-              {errors.password && (
-                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                  {errors.password}
-                </p>
-              )}
-            </div>
-            {authError && (
-              <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
-                {authError}
-              </p>
-            )}
-            <button
-              type="submit"
-              disabled={submitting}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-600/25 hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-70"
-            >
-              {submitting && (
-                <span
-                  className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"
-                  aria-hidden
-                />
-              )}
-              {submitting
-                ? "Входим…"
-                : mode === "login"
-                  ? "Войти"
-                  : "Создать аккаунт"}
-            </button>
-          </form>
+                {authError && (
+                  <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                    {authError}
+                  </p>
+                )}
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 py-3 text-sm font-semibold text-white shadow-lg shadow-sky-600/25 hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-70"
+                >
+                  {submitting && (
+                    <span
+                      className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"
+                      aria-hidden
+                    />
+                  )}
+                  {submitting
+                    ? "Отправляем…"
+                    : mode === "login"
+                      ? "Войти"
+                      : mode === "forgot"
+                        ? "Отправить письмо"
+                        : "Создать аккаунт"}
+                </button>
+                {mode === "login" && (
+                  <button
+                    type="button"
+                    onClick={() => switchMode("forgot")}
+                    className="w-full text-center text-sm font-medium text-sky-600 hover:underline dark:text-sky-400"
+                  >
+                    Забыли пароль?
+                  </button>
+                )}
+                {mode === "forgot" && (
+                  <button
+                    type="button"
+                    onClick={() => switchMode("login")}
+                    className="w-full text-center text-sm font-medium text-slate-600 hover:underline dark:text-slate-400"
+                  >
+                    Вернуться ко входу
+                  </button>
+                )}
+              </form>
 
-          <div className="relative my-8">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-slate-200 dark:border-slate-800" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase tracking-wide text-slate-500">
-              <span className="bg-slate-50 px-2 dark:bg-slate-950">или</span>
-            </div>
-          </div>
+              {mode !== "forgot" && (
+                <>
+                  <div className="relative my-8">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-slate-200 dark:border-slate-800" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase tracking-wide text-slate-500">
+                      <span className="bg-slate-50 px-2 dark:bg-slate-950">
+                        или
+                      </span>
+                    </div>
+                  </div>
 
-          <button
-            type="button"
-            onClick={() => nav("/login")}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-          >
-            <span className="text-lg">📸</span>
-            Continue with Instagram
-          </button>
-          <p className="mt-6 text-center text-xs text-slate-500">
-            OAuth пока не подключён — войдите через email или зарегистрируйтесь.
-          </p>
+                  <button
+                    type="button"
+                    onClick={() => nav("/login")}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white py-3 text-sm font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <span className="text-lg">📸</span>
+                    Continue with Instagram
+                  </button>
+                  <p className="mt-6 text-center text-xs text-slate-500">
+                    OAuth пока не подключён — войдите через email или
+                    зарегистрируйтесь.
+                  </p>
+                </>
+              )}
+            </>
+          )}
         </div>
       </div>
       <div className="hidden flex-1 bg-gradient-to-br from-sky-600 via-indigo-600 to-violet-700 lg:flex lg:flex-col lg:justify-end lg:p-12">
@@ -457,6 +623,212 @@ export function AuthPage() {
             Мария, основательница студии контента
           </footer>
         </blockquote>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 2b. Email confirmation callback ---------- */
+
+export function AuthCallbackPage() {
+  const { completeEmailConfirmation } = useAppData();
+  const nav = useNavigate();
+  const [status, setStatus] = useState("loading");
+  const [message, setMessage] = useState("Подтверждаем email…");
+
+  useEffect(() => {
+    let cancelled = false;
+    completeEmailConfirmation()
+      .then((newSession) => {
+        if (cancelled) return;
+        setStatus("success");
+        setMessage("Email подтверждён. Перенаправляем…");
+        window.setTimeout(() => {
+          nav(newSession ? "/app" : "/login", { replace: true });
+        }, 1500);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage(
+          formatUserError(err, "Ссылка недействительна или устарела.")
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [completeEmailConfirmation, nav]);
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <Logo />
+        {status === "loading" && (
+          <div className="mt-6">
+            <DataLoading text={message} className="text-center" />
+          </div>
+        )}
+        {status === "success" && (
+          <p className="mt-6 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+            {message}
+          </p>
+        )}
+        {status === "error" && (
+          <>
+            <p className="mt-6 text-sm text-rose-700 dark:text-rose-300">
+              {message}
+            </p>
+            <Link
+              to="/login"
+              className="mt-4 inline-block text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400"
+            >
+              Вернуться ко входу
+            </Link>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 2c. Reset password (ссылка из письма) ---------- */
+
+export function ResetPasswordPage() {
+  const { updatePassword, signOut, authReady } = useAppData();
+  const nav = useNavigate();
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [errors, setErrors] = useState({});
+  const [authError, setAuthError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [canReset, setCanReset] = useState(false);
+
+  useEffect(() => {
+    if (!authReady) return;
+    supabase.auth.getSession().then(({ data, error }) => {
+      setChecking(false);
+      if (error || !data.session) {
+        setAuthError(
+          "Ссылка недействительна или устарела. Запросите сброс пароля снова."
+        );
+        setCanReset(false);
+      } else {
+        setCanReset(true);
+      }
+    });
+  }, [authReady]);
+
+  const onSubmit = async (e) => {
+    e.preventDefault();
+    const passwordErr = validateAuthPassword(password);
+    const confirmErr = validatePasswordConfirm(password, confirm);
+    setErrors({ password: passwordErr, confirm: confirmErr });
+    if (passwordErr || confirmErr) return;
+
+    setSubmitting(true);
+    setAuthError("");
+    try {
+      await updatePassword(password);
+      await signOut();
+      nav("/login?reset=success", { replace: true });
+    } catch (err) {
+      setAuthError(
+        formatUserError(err, "Не удалось обновить пароль. Попробуйте позже.")
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const inputError = (key) =>
+    errors[key]
+      ? "border-rose-400 ring-rose-200 focus:ring-rose-300 dark:border-rose-500 dark:ring-rose-900/40"
+      : "border-slate-200 dark:border-slate-700";
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4 dark:bg-slate-950">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <Link to="/" className="inline-flex">
+          <Logo />
+        </Link>
+        <h2 className="mt-6 text-xl font-bold text-slate-900 dark:text-white">
+          Новый пароль
+        </h2>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+          Задайте новый пароль для вашего аккаунта.
+        </p>
+
+        {checking ? (
+          <div className="mt-6">
+            <DataLoading text="Проверяем ссылку…" className="text-center" />
+          </div>
+        ) : !canReset ? (
+          <div className="mt-6">
+            <p className="text-sm text-rose-700 dark:text-rose-300">{authError}</p>
+            <Link
+              to="/login?mode=forgot"
+              className="mt-4 inline-block text-sm font-semibold text-sky-600 hover:underline dark:text-sky-400"
+            >
+              Запросить сброс снова
+            </Link>
+          </div>
+        ) : (
+          <form onSubmit={onSubmit} className="mt-6 space-y-4" noValidate>
+            <div>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                Новый пароль
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setErrors((prev) => ({ ...prev, password: "" }));
+                }}
+                className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-950 ${inputError("password")}`}
+                autoComplete="new-password"
+              />
+              {errors.password && (
+                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                  {errors.password}
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                Подтвердите пароль
+              </label>
+              <input
+                type="password"
+                value={confirm}
+                onChange={(e) => {
+                  setConfirm(e.target.value);
+                  setErrors((prev) => ({ ...prev, confirm: "" }));
+                }}
+                className={`mt-1 w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none ring-sky-500/30 focus:ring-4 dark:bg-slate-950 ${inputError("confirm")}`}
+                autoComplete="new-password"
+              />
+              {errors.confirm && (
+                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                  {errors.confirm}
+                </p>
+              )}
+            </div>
+            {authError && (
+              <p className="rounded-xl bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">
+                {authError}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-600 py-3 text-sm font-semibold text-white hover:bg-sky-500 disabled:opacity-70"
+            >
+              {submitting ? "Сохраняем…" : "Сохранить пароль"}
+            </button>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -1910,14 +2282,105 @@ export function ContentPlanPage() {
 
 /* ---------- 7. Settings ---------- */
 
+function parseTelegramLinkDebug(deepLink) {
+  if (!deepLink) {
+    return { linkToken: "", startCommand: "", deepLink: "" };
+  }
+  try {
+    const url = new URL(deepLink);
+    const start = url.searchParams.get("start") || "";
+    const linkToken = start.startsWith("link_") ? start.slice(5) : start;
+    const startCommand = start ? `/start ${start}` : "";
+    return { linkToken, startCommand, deepLink };
+  } catch {
+    return { linkToken: "", startCommand: "", deepLink };
+  }
+}
+
 export function SettingsPage() {
   const { dark, toggleTheme } = useTheme();
-  const { previewMode, userProfile, socialAccounts, loading, error, refresh } =
-    useAppData();
+  const {
+    previewMode,
+    userProfile,
+    socialAccounts,
+    loading,
+    error,
+    refresh,
+    telegram,
+    refreshTelegram,
+    startTelegramLink,
+    setTelegramRemindersEnabled,
+  } = useAppData();
+
+  const [telegramBusy, setTelegramBusy] = useState(false);
+  const [telegramError, setTelegramError] = useState("");
+  const [linkingTelegram, setLinkingTelegram] = useState(false);
+  const [telegramDeepLink, setTelegramDeepLink] = useState("");
+  const [copyCommandHint, setCopyCommandHint] = useState("");
+
+  const telegramLinkDebug = useMemo(
+    () => parseTelegramLinkDebug(telegramDeepLink),
+    [telegramDeepLink]
+  );
 
   const instagramAccount = socialAccounts.find(
     (a) => a.platform === "instagram"
   );
+
+  useEffect(() => {
+    if (!linkingTelegram || telegram.is_connected) return undefined;
+    const id = window.setInterval(() => {
+      refreshTelegram();
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [linkingTelegram, telegram.is_connected, refreshTelegram]);
+
+  useEffect(() => {
+    if (telegram.is_connected) setLinkingTelegram(false);
+  }, [telegram.is_connected]);
+
+  const handleConnectTelegram = async () => {
+    setTelegramError("");
+    setTelegramDeepLink("");
+    setTelegramBusy(true);
+    try {
+      const deepLink = await startTelegramLink();
+      setTelegramDeepLink(deepLink);
+      setLinkingTelegram(true);
+    } catch (e) {
+      setTelegramError(
+        e instanceof Error ? e.message : "Не удалось подключить Telegram."
+      );
+    } finally {
+      setTelegramBusy(false);
+    }
+  };
+
+  const handleToggleReminders = async (enabled) => {
+    setTelegramError("");
+    setTelegramBusy(true);
+    try {
+      await setTelegramRemindersEnabled(enabled);
+    } catch (e) {
+      setTelegramError(
+        e instanceof Error ? e.message : "Не удалось сохранить настройку."
+      );
+    } finally {
+      setTelegramBusy(false);
+    }
+  };
+
+  const handleCopyStartCommand = async () => {
+    if (!telegramLinkDebug.startCommand) return;
+    try {
+      await navigator.clipboard.writeText(telegramLinkDebug.startCommand);
+      setCopyCommandHint("Скопировано");
+      window.setTimeout(() => setCopyCommandHint(""), 2000);
+    } catch {
+      setCopyCommandHint("Не удалось скопировать");
+      window.setTimeout(() => setCopyCommandHint(""), 2000);
+    }
+  };
 
   if (loading) {
     return (
@@ -2005,29 +2468,126 @@ export function SettingsPage() {
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
         <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-          Уведомления
+          Telegram
         </h2>
+        <p className="mt-1 text-sm text-slate-500">
+          Напоминания о публикациях из контент-плана в день{" "}
+          <code className="text-xs">scheduled_date</code>.
+        </p>
+
         <div className="mt-4 space-y-3">
-          {[
-            "Email: еженедельный отчёт",
-            "Push: пиковые провалы ER",
-            "Telegram: напоминание о публикации",
-          ].map((label) => (
-            <label
-              key={label}
-              className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/50"
-            >
-              <span className="text-sm text-slate-700 dark:text-slate-200">
-                {label}
-              </span>
-              <input
-                type="checkbox"
-                defaultChecked
-                disabled={previewMode}
-                className="h-4 w-4 disabled:cursor-not-allowed"
-              />
-            </label>
-          ))}
+          <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/50">
+            <div>
+              <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
+                Статус
+              </p>
+              <p className="text-xs text-slate-500">
+                {previewMode
+                  ? "Доступно после входа"
+                  : telegram.is_connected
+                    ? "Подключено"
+                    : linkingTelegram
+                      ? "Ожидание подтверждения в боте…"
+                      : "Не подключено"}
+              </p>
+            </div>
+            {!previewMode && !telegram.is_connected && (
+              <button
+                type="button"
+                onClick={handleConnectTelegram}
+                disabled={telegramBusy}
+                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-sky-800 dark:bg-sky-950 dark:text-sky-300"
+              >
+                {telegramBusy ? "Подготовка…" : "Подключить"}
+              </button>
+            )}
+          </div>
+
+          {!previewMode && telegramDeepLink && (
+            <div className="space-y-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs dark:border-amber-900 dark:bg-amber-950/30">
+              <p className="font-semibold text-amber-900 dark:text-amber-200">
+                DEBUG · Telegram
+              </p>
+              <div>
+                <p className="text-amber-800/80 dark:text-amber-300/80">
+                  link_token
+                </p>
+                <code className="mt-1 block break-all text-amber-950 dark:text-amber-100">
+                  {telegramLinkDebug.linkToken || "—"}
+                </code>
+              </div>
+              <div>
+                <p className="text-amber-800/80 dark:text-amber-300/80">
+                  deep link
+                </p>
+                <code className="mt-1 block break-all text-amber-950 dark:text-amber-100">
+                  {telegramLinkDebug.deepLink}
+                </code>
+              </div>
+              <div>
+                <p className="text-amber-800/80 dark:text-amber-300/80">
+                  команда для бота
+                </p>
+                <code className="mt-1 block break-all text-amber-950 dark:text-amber-100">
+                  {telegramLinkDebug.startCommand || "—"}
+                </code>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyStartCommand}
+                  disabled={!telegramLinkDebug.startCommand}
+                  className="rounded-full border border-amber-300 bg-white px-3 py-1 text-xs font-semibold text-amber-900 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+                >
+                  Скопировать команду
+                </button>
+                {copyCommandHint && (
+                  <span className="text-amber-800 dark:text-amber-300">
+                    {copyCommandHint}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          <label className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/50">
+            <span className="text-sm text-slate-700 dark:text-slate-200">
+              Напоминание о публикации
+            </span>
+            <input
+              type="checkbox"
+              checked={telegram.reminders_enabled}
+              disabled={
+                previewMode || !telegram.is_connected || telegramBusy
+              }
+              onChange={(e) => handleToggleReminders(e.target.checked)}
+              className="h-4 w-4 disabled:cursor-not-allowed"
+            />
+          </label>
+
+          {telegramError && (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              {telegramError}
+            </p>
+          )}
+
+          {linkingTelegram && !telegram.is_connected && telegramDeepLink && (
+            <div className="space-y-2 rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 dark:border-sky-900 dark:bg-sky-950/40">
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                Откройте ссылку ниже и нажмите{" "}
+                <span className="font-semibold">Start</span> в боте. Статус
+                обновится автоматически.
+              </p>
+              <a
+                href={telegramDeepLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex rounded-full bg-sky-600 px-3 py-1 text-xs font-semibold text-white hover:bg-sky-700"
+              >
+                Открыть Telegram
+              </a>
+            </div>
+          )}
         </div>
       </div>
 
