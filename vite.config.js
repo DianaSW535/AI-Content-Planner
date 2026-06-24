@@ -4,4 +4,8 @@ import react from "@vitejs/plugin-react";
 // Vite: быстрый dev-сервер и сборка для React
 export default defineConfig({
   plugins: [react()],
+  server: {
+    port: 5173,
+    strictPort: true,
+  },
 });

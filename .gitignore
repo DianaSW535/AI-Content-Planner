@@ -7,12 +7,18 @@ dist/
 # environment
 .env
 .env.local
+.env.test
 
 # Supabase temp files
 supabase/.temp/
 
 # logs
 *.log
+
+# Playwright
+test-results/
+playwright-report/
+playwright/.auth/
 
 # editors
 .vscode/
